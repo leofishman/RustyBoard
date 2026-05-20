@@ -1,0 +1,2 @@
+# RustyBoard
+Another Clipboard manager
