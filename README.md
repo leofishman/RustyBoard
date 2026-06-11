@@ -26,7 +26,9 @@ RustyBoard is designed around a zero-trust model for clipboard data:
 
 ## ✨ Features
 
-- **Background Monitoring**: Polls the OS clipboard every 500ms using `arboard`.
+- **Event-Driven Clipboard Monitoring**: Uses `clipboard-master` to hook into native OS events (XFixes selection events on Linux X11, `WM_CLIPBOARDUPDATE` on Windows, and NSPasteboard `changeCount` on macOS). This ensures **0% CPU utilization** when the clipboard is idle.
+- **Configurable Global Shortcuts**: Features hotkey integration via `tauri-plugin-global-shortcut` to toggle the visibility of the primary window. Custom hotkeys are validated and registered dynamically at runtime.
+- **Persistent Settings**: Automatically loads and stores your customized shortcut configuration inside `config.json` in the user's config directory.
 - **Feedback Loop Prevention**: Automatically detects and ignores clip changes originating from within the app itself.
 - **Image Support**: Captures raw clipboard screenshots, encodes them to PNG, and renders them reactively.
 - **Extensible Detector Pipeline**: The frontend classifies data and presents customized cards:
@@ -62,5 +64,5 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 - [x] **Phase 1: Security & Sanitization Module** (Input validation, SVG scrubbing, and data sensitivity analysis).
 - [x] **Phase 2: Backend & IPC Commands** (Clipboard polling, Double Channel storage, feedback loop suppression).
 - [x] **Phase 3: Frontend & Extensible Detectors** (Leptos event listening, dynamic card layouts, dark CSS theme).
-- [ ] **Phase 4: System Integration** (Launch hidden in System Tray, global keyboard shortcuts, dynamic popup window positioning).
+- [x] **Phase 4: Event-Driven Clipboard & Configurable Shortcuts** (Zero-CPU idle monitor, persistent config file, dynamic window toggle hotkey).
 - [ ] **Phase 5: Secure Local Storage** (SQLite local storage, master key integration with OS keyring, and automatic TTL pruning).

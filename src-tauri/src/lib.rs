@@ -1,13 +1,16 @@
 mod security;
+mod config;
 
 use std::sync::Mutex;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 use serde::{Serialize, Deserialize};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use std::hash::{Hash, Hasher};
+use clipboard_master::{ClipboardHandler, CallbackResult, Master};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ClipboardItem {
@@ -96,6 +99,41 @@ fn copy_to_clipboard(state: State<'_, AppState>, id: String) -> Result<(), Strin
     Ok(())
 }
 
+#[tauri::command]
+fn get_shortcut(app: AppHandle) -> String {
+    let config = config::load_config(&app);
+    config.shortcut
+}
+
+#[tauri::command]
+fn set_shortcut(app: AppHandle, shortcut_str: String) -> Result<(), String> {
+    use std::str::FromStr;
+
+    let new_shortcut = Shortcut::from_str(&shortcut_str)
+        .map_err(|_| "Invalid shortcut format".to_string())?;
+
+    let mut config = config::load_config(&app);
+    let old_shortcut_str = config.shortcut.clone();
+
+    // Register new shortcut
+    app.global_shortcut()
+        .register(new_shortcut)
+        .map_err(|e| format!("Failed to register new shortcut: {}", e))?;
+
+    // Unregister old shortcut (if it changed)
+    if old_shortcut_str != shortcut_str {
+        if let Ok(old_shortcut) = Shortcut::from_str(&old_shortcut_str) {
+            let _ = app.global_shortcut().unregister(old_shortcut);
+        }
+    }
+
+    // Save configuration
+    config.shortcut = shortcut_str;
+    config::save_config(&app, &config)?;
+
+    Ok(())
+}
+
 fn calculate_hash<T: Hash>(t: &T) -> u64 {
     let mut s = std::collections::hash_map::DefaultHasher::new();
     t.hash(&mut s);
@@ -119,85 +157,83 @@ fn encode_image_to_png(image_data: &arboard::ImageData<'_>) -> Result<String, St
     Ok(BASE64.encode(png_bytes))
 }
 
-fn start_clipboard_monitor(app_handle: AppHandle) {
-    thread::spawn(move || {
-        let mut last_text = String::new();
-        let mut last_image_hash: Option<u64> = None;
+struct ClipboardMonitor {
+    app_handle: AppHandle,
+    last_text: Mutex<String>,
+    last_image_hash: Mutex<Option<u64>>,
+}
 
-        loop {
-            thread::sleep(Duration::from_millis(500));
+impl ClipboardHandler for ClipboardMonitor {
+    fn on_clipboard_change(&mut self) -> CallbackResult {
+        let state = self.app_handle.state::<AppState>();
+        let mut clipboard = match arboard::Clipboard::new() {
+            Ok(c) => c,
+            Err(_) => return CallbackResult::Next,
+        };
 
-            let state = app_handle.state::<AppState>();
-            let mut clipboard = match arboard::Clipboard::new() {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
+        // 1. Try to read text
+        if let Ok(text) = clipboard.get_text() {
+            let trimmed = text.trim();
+            let mut last_t = self.last_text.lock().unwrap();
+            if !trimmed.is_empty() && text != *last_t {
+                let is_own_write = {
+                    let last_w = state.last_written.lock().unwrap();
+                    last_w.as_ref() == Some(&text)
+                };
 
-            // 1. Try to read text
-            if let Ok(text) = clipboard.get_text() {
-                let trimmed = text.trim();
-                if !trimmed.is_empty() && text != last_text {
-                    let is_own_write = {
-                        let last_w = state.last_written.lock().unwrap();
-                        last_w.as_ref() == Some(&text)
+                *last_t = text.clone();
+                let mut last_img = self.last_image_hash.lock().unwrap();
+                *last_img = None; // Reset image comparator
+
+                if is_own_write {
+                    // Clean loop flag
+                    let mut last_w = state.last_written.lock().unwrap();
+                    *last_w = None;
+                } else {
+                    // Process text
+                    let (display_content, sensitivity) = if trimmed.starts_with("<svg") && trimmed.ends_with("</svg>") {
+                        match security::sanitize_svg(&text) {
+                            Ok(clean) => (clean, security::Sensitivity::None),
+                            Err(_) => (security::sanitize_text(&text), security::classify_sensitivity(&text)),
+                        }
+                    } else {
+                        (security::sanitize_text(&text), security::classify_sensitivity(&text))
                     };
 
-                    // Reset comparator for text
-                    last_text = text.clone();
-                    last_image_hash = None; // Reset image comparator
+                    let new_item = ClipboardItem {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        raw_content: text.clone(),
+                        display_content,
+                        content_type: "text".to_string(),
+                        sensitivity,
+                        timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+                    };
 
-                    if is_own_write {
-                        // Clean loop flag
-                        let mut last_w = state.last_written.lock().unwrap();
-                        *last_w = None;
-                    } else {
-                        // Process text
-                        let (display_content, sensitivity) = if trimmed.starts_with("<svg") && trimmed.ends_with("</svg>") {
-                            match security::sanitize_svg(&text) {
-                                Ok(clean) => (clean, security::Sensitivity::None),
-                                Err(_) => (security::sanitize_text(&text), security::classify_sensitivity(&text)),
-                            }
-                        } else {
-                            (security::sanitize_text(&text), security::classify_sensitivity(&text))
-                        };
-
-                        let new_item = ClipboardItem {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            raw_content: text.clone(),
-                            display_content,
-                            content_type: "text".to_string(),
-                            sensitivity,
-                            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
-                        };
-
-                        {
-                            let mut history = state.history.lock().unwrap();
-                            history.insert(0, new_item.clone());
-                            if history.len() > 50 {
-                                history.pop();
-                            }
+                    {
+                        let mut history = state.history.lock().unwrap();
+                        history.insert(0, new_item.clone());
+                        if history.len() > 50 {
+                            history.pop();
                         }
-
-                        let ui_item: UIClipboardItem = new_item.into();
-                        let _ = app_handle.emit("clipboard-changed", ui_item);
                     }
+
+                    let ui_item: UIClipboardItem = new_item.into();
+                    let _ = self.app_handle.emit("clipboard-changed", ui_item);
                 }
             }
-            // 2. Try to read image
-            else if let Ok(image_data) = clipboard.get_image() {
-                let bytes = &*image_data.bytes;
-                let image_hash = calculate_hash(&bytes);
+        }
+        // 2. Try to read image
+        else if let Ok(image_data) = clipboard.get_image() {
+            let bytes = &*image_data.bytes;
+            let image_hash = calculate_hash(&bytes);
 
-                if Some(image_hash) != last_image_hash {
-                    // Reset text comparator since we now have an image
-                    last_text = String::new();
-                    last_image_hash = Some(image_hash);
+            let mut last_img = self.last_image_hash.lock().unwrap();
+            if Some(image_hash) != *last_img {
+                let mut last_t = self.last_text.lock().unwrap();
+                *last_t = String::new(); // Reset text comparator
+                *last_img = Some(image_hash);
 
-                    let png_base64 = match encode_image_to_png(&image_data) {
-                        Ok(base64_str) => base64_str,
-                        Err(_) => continue,
-                    };
-
+                if let Ok(png_base64) = encode_image_to_png(&image_data) {
                     let is_own_write = {
                         let last_w = state.last_written.lock().unwrap();
                         last_w.as_ref() == Some(&png_base64)
@@ -225,10 +261,29 @@ fn start_clipboard_monitor(app_handle: AppHandle) {
                         }
 
                         let ui_item: UIClipboardItem = new_item.into();
-                        let _ = app_handle.emit("clipboard-changed", ui_item);
+                        let _ = self.app_handle.emit("clipboard-changed", ui_item);
                     }
                 }
             }
+        }
+
+        CallbackResult::Next
+    }
+
+    fn on_clipboard_error(&mut self, _error: std::io::Error) -> CallbackResult {
+        CallbackResult::Next
+    }
+}
+
+fn start_clipboard_monitor(app_handle: AppHandle) {
+    thread::spawn(move || {
+        let monitor = ClipboardMonitor {
+            app_handle,
+            last_text: Mutex::new(String::new()),
+            last_image_hash: Mutex::new(None),
+        };
+        if let Ok(mut master) = Master::new(monitor) {
+            let _ = master.run();
         }
     });
 }
@@ -240,10 +295,49 @@ pub fn run() {
         .manage(AppState::default())
         .setup(|app| {
             let handle = app.handle().clone();
-            start_clipboard_monitor(handle);
+            start_clipboard_monitor(handle.clone());
+
+            // Initialize global shortcut plugin with window toggle handler
+            let global_shortcut_plugin = tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(move |app, shortcut, event| {
+                    if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        let config = config::load_config(app);
+                        use std::str::FromStr;
+                        if let Ok(configured_shortcut) = Shortcut::from_str(&config.shortcut) {
+                            if shortcut == &configured_shortcut {
+                                if let Some(window) = app.get_webview_window("main") {
+                                    if let Ok(visible) = window.is_visible() {
+                                        if visible {
+                                            let _ = window.hide();
+                                        } else {
+                                            let _ = window.show();
+                                            let _ = window.set_focus();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                })
+                .build();
+
+            app.handle().plugin(global_shortcut_plugin)?;
+
+            // Register initial shortcut from config
+            let config = config::load_config(&handle);
+            use std::str::FromStr;
+            if let Ok(initial_shortcut) = Shortcut::from_str(&config.shortcut) {
+                let _ = handle.global_shortcut().register(initial_shortcut);
+            }
+
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_history, copy_to_clipboard])
+        .invoke_handler(tauri::generate_handler![
+            get_history,
+            copy_to_clipboard,
+            get_shortcut,
+            set_shortcut
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

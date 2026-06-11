@@ -27,4 +27,6 @@ uuid = { version = "1.10", features = ["v4"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"
 regex = "1.10"
+clipboard-master = "4"
+tauri-plugin-global-shortcut = "2"
 
