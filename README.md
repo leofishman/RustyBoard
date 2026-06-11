@@ -1,36 +1,66 @@
 # RustyBoard 🦀📋
 
-## This is a personal learning project for me to learn Tauri 2
+RustyBoard is a high-performance, secure clipboard manager built entirely in Rust. It utilizes **Tauri 2** for native operating system interactions (System Tray, Global Hotkeys, Clipboard access) and **Leptos v0.7** (WebAssembly CSR) for a lightweight, reactive user interface.
 
-## Is not functional and is not intended to be used in production, it is just a learning project
+> [!WARNING]
+> This is a personal learning project and is currently in active development.
 
-## The project is a work in progress and is not finished yet
+---
 
-RustyBoard is a high-performance, privacy-focused clipboard manager built with **Tauri 2**, **Rust**, and **Leptos**. Designed to be lightweight and secure, it features advanced encryption and an efficient monitoring system to minimize system resource impact.
+## 🛡️ Security-First Architecture
 
-# 📋 Development Roadmap
+RustyBoard is designed around a zero-trust model for clipboard data:
 
-## Phase 1: Core Data & Minimal Frontend 🗼
+1. **Double Channel (Doble Canal) Strategy**:
+   - **`raw_content`**: The original, unaltered content captured from the OS. This remains safely on the backend, is never exposed to the Leptos WebView, and is only written back to the clipboard when you explicitly request a copy.
+   - **`display_content`**: A sanitized version of the content used exclusively for UI rendering.
+2. **SVG Sanitization**: Any copied vector graphic is parsed and scrubbed on the backend to strip `<script>`, `<iframe>`, `<object>`, `<embed>`, and inline event handlers (like `onload` or `onclick`) to prevent Cross-Site Scripting (XSS) in the WebView.
+3. **Entropy & Sensitivity Classification**:
+   All incoming text is evaluated for sensitive data:
+   - `Secret`: Passwords, credit cards, private keys. They are masked by default, zeroized, and excluded from persistent storage policies.
+   - `Credential`: API keys, auth tokens. Masked by default in the UI with a reveal toggle.
+   - `Personal`: Emails and phone numbers. Styled with a privacy indicator.
+   - `None`: Normal text, links, and images.
 
-- [ ] Task 1.1: Design the \`ClipboardItem\` struct in Rust (support text, formats, and timestamps).
-- [ ] Task 1.2: Build the Leptos UI to render a scannable list of historical items.
-- [ ] Task 1.3: Implement reactive state management (Signals) for manual item addition.
+---
 
-## Phase 2: Background OS Monitoring (Polling) ⏳
+## ✨ Features
 
-- [ ] Task 2.1: Integrate \`arboard\` crate for cross-platform clipboard access.
-- [ ] Task 2.2: Spawn a native Tauri thread to poll the OS clipboard every 500ms.
-- [ ] Task 2.3: Implement a listener to trigger Tauri IPC events when changes occur.
+- **Background Monitoring**: Polls the OS clipboard every 500ms using `arboard`.
+- **Feedback Loop Prevention**: Automatically detects and ignores clip changes originating from within the app itself.
+- **Image Support**: Captures raw clipboard screenshots, encodes them to PNG, and renders them reactively.
+- **Extensible Detector Pipeline**: The frontend classifies data and presents customized cards:
+  - **SVG**: Renders inline vector graphics safely.
+  - **JSON**: Formats and beautifies code blocks.
+  - **URL**: Displays interactive clickable links.
+  - **TEXT**: Displays wrapped multi-line text blocks.
+- **Premium UI**: Styled with a dark glassmorphism theme, custom tags, and interactive action buttons.
 
-## Phase 3: Window Behavior & Pop-up Mechanics 🪟
+---
 
-- [ ] Task 3.1: Configure Tauri to launch headless (System Tray / App Indicator only).
-- [ ] Task 3.2: Register global shortcuts (\`Ctrl + Shift + V\` for standard, custom for private).
-- [ ] Task 3.3: Calculate mouse cursor coordinates to position the pop-up window dynamically.
+## 🚀 Quick Start
 
-## Phase 4: Storage & Advanced Privacy Layers 💾 🔐
+### Prerequisites
+Ensure you have Rust, Cargo, and Tauri dependencies installed on your system. You also need [Trunk](https://trunkrs.dev/) for compiling the WebAssembly frontend.
 
-- [ ] Task 4.1: Setup an embedded SQLite database using a lightweight manager (e.g., \`rusqlite\`).
-- [ ] Task 4.2: Implement **AES-256-GCM** encryption for items marked with high-privacy tags.
-- [ ] Task 4.3: Create an automated Time-to-Live (TTL) janitor thread to scrub expired private data.
-- [ ] Task 4.4: Add active window detection (X11/Wayland) to blacklist clipboard sniffing in target apps.
+### Running Development Server
+To launch the application in development mode:
+```bash
+cargo tauri dev
+```
+
+### Running Backend Unit Tests
+To verify security filters and sanitization rules:
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml --lib
+```
+
+---
+
+## 📋 Development Roadmap
+
+- [x] **Phase 1: Security & Sanitization Module** (Input validation, SVG scrubbing, and data sensitivity analysis).
+- [x] **Phase 2: Backend & IPC Commands** (Clipboard polling, Double Channel storage, feedback loop suppression).
+- [x] **Phase 3: Frontend & Extensible Detectors** (Leptos event listening, dynamic card layouts, dark CSS theme).
+- [ ] **Phase 4: System Integration** (Launch hidden in System Tray, global keyboard shortcuts, dynamic popup window positioning).
+- [ ] **Phase 5: Secure Local Storage** (SQLite local storage, master key integration with OS keyring, and automatic TTL pruning).
