@@ -1,4 +1,5 @@
 mod app;
+mod detectors;
 
 use app::*;
 use leptos::prelude::*;
