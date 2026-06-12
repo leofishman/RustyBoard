@@ -44,6 +44,9 @@ RustyBoard is designed around a zero-trust model for clipboard data:
   - **Sensitive**: Persists credentials (with a 2-hour TTL expiration) and personal details.
   - **Paranoid**: Persists everything, including secrets, after presenting a warning confirmation modal.
 - **Markdown & Mermaid Rendering**: Native compiler for styled Markdown text and live rendering of dynamic Mermaid graphs (flowcharts, state diagrams).
+- **Preview/Raw Toggle**: Allows cards with specialized formatting (Markdown, Mermaid, JSON, SVG) to be dynamically toggled between raw source code/markup and rendered graphical views.
+- **Dynamic System Tray Clipboard Menu (Diodon-style)**: Lists the 15 most recent clipboard history entries directly in the tray menu (featuring newline cleanup, truncation, media indicators, and secure credential masking). Selecting any item copies it back to the active OS clipboard.
+- **Automatic History Refresh**: Listening to Tauri window show events to automatically reload and refresh history when the window is shown or focused.
 - **System Tray Background Daemon**: Intercepts close events to hide the app to the system tray, allowing it to run in the background. Left-clicking the icon toggles visibility.
 - **Premium UI**: Styled with a dark glassmorphism theme, custom tags, dynamic confirmation dialogs, and interactive action buttons.
 
@@ -78,4 +81,5 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 - [x] **Phase 6: Secure Local Storage** (SQLite local storage, configurable persistence levels, and automatic TTL pruning).
 - [x] **Phase 7: Markdown & Mermaid Rendering** (Safe native Markdown compilation, dynamic inline Mermaid vector diagrams).
 - [x] **Phase 8: Persistence & System Tray** (System tray daemon mode, window-close interception to tray, and warning modal for advanced persistence).
+- [x] **Phase 9: Dynamic Tray History & Preview/Raw Switching** (Diodon-style tray menu items, click-to-copy from tray, card view toggling, and reload on focus).
 
