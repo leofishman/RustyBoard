@@ -60,8 +60,8 @@ fn get_history(state: State<'_, AppState>) -> Result<Vec<UIClipboardItem>, Strin
     Ok(ui_items)
 }
 
-#[tauri::command]
-fn copy_to_clipboard(state: State<'_, AppState>, id: String) -> Result<(), String> {
+fn copy_item_by_id(app: &AppHandle, id: &str) -> Result<(), String> {
+    let state = app.state::<AppState>();
     let history = state.history.lock().map_err(|e| e.to_string())?;
     let item = history.iter().find(|x| x.id == id)
         .ok_or_else(|| "Item not found".to_string())?;
@@ -98,6 +98,71 @@ fn copy_to_clipboard(state: State<'_, AppState>, id: String) -> Result<(), Strin
     }
 
     Ok(())
+}
+
+fn update_tray_menu(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let history = state.history.lock().map_err(|e| e.to_string())?;
+    
+    // Build menu
+    let mut menu_builder = tauri::menu::MenuBuilder::new(app);
+    
+    // Add history items
+    if history.is_empty() {
+        let empty_i = tauri::menu::MenuItem::with_id(app, "empty_placeholder", "(No clips yet)", false, None::<&str>).map_err(|e| e.to_string())?;
+        menu_builder = menu_builder.item(&empty_i);
+    } else {
+        for item in history.iter().take(15) { // Show top 15 items in tray menu
+            let mut label = item.display_content.clone();
+            // Replace newlines with spaces for clean display in menu
+            label = label.replace('\n', " ").replace('\r', "");
+            // Truncate label to 50 chars for clean display
+            if label.chars().count() > 50 {
+                label = label.chars().take(47).collect::<String>() + "...";
+            }
+            // If label is empty (e.g. image), show indicator
+            if label.trim().is_empty() {
+                if item.content_type == "image" {
+                    label = "[Image]".to_string();
+                } else {
+                    label = "[Empty Content]".to_string();
+                }
+            }
+            // Mask secrets / credentials
+            if item.sensitivity == security::Sensitivity::Secret {
+                label = "•••••••• [Secret]".to_string();
+            } else if item.sensitivity == security::Sensitivity::Credential {
+                label = "•••••••• [Credential]".to_string();
+            }
+
+            // Create custom menu item with item id
+            let clip_i = tauri::menu::MenuItem::with_id(app, &item.id, &label, true, None::<&str>).map_err(|e| e.to_string())?;
+            menu_builder = menu_builder.item(&clip_i);
+        }
+    }
+    
+    // Add separator
+    let separator = tauri::menu::PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
+    menu_builder = menu_builder.item(&separator);
+    
+    // Add static items
+    let show_i = tauri::menu::MenuItem::with_id(app, "show", "Show RustyBoard", true, None::<&str>).map_err(|e| e.to_string())?;
+    let quit_i = tauri::menu::MenuItem::with_id(app, "quit", "Quit", true, None::<&str>).map_err(|e| e.to_string())?;
+    
+    menu_builder = menu_builder.item(&show_i).item(&quit_i);
+    
+    let menu = menu_builder.build().map_err(|e| e.to_string())?;
+    
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_menu(Some(menu));
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
+fn copy_to_clipboard(app: AppHandle, id: String) -> Result<(), String> {
+    copy_item_by_id(&app, &id)
 }
 
 #[tauri::command]
@@ -244,6 +309,7 @@ impl ClipboardHandler for ClipboardMonitor {
 
                     let ui_item: UIClipboardItem = new_item.into();
                     let _ = self.app_handle.emit("clipboard-changed", ui_item);
+                    let _ = update_tray_menu(&self.app_handle);
                 }
             }
         }
@@ -292,6 +358,7 @@ impl ClipboardHandler for ClipboardMonitor {
 
                           let ui_item: UIClipboardItem = new_item.into();
                           let _ = self.app_handle.emit("clipboard-changed", ui_item);
+                          let _ = update_tray_menu(&self.app_handle);
                       }
                   }
               }
@@ -380,22 +447,12 @@ impl ClipboardHandler for ClipboardMonitor {
                   let _ = handle.global_shortcut().register(initial_shortcut);
               }
 
-              // 5. Initialize System Tray Menu Items
-              let quit_i = tauri::menu::MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-              let show_i = tauri::menu::MenuItem::with_id(app, "show", "Show RustyBoard", true, None::<&str>)?;
-
-              // Build System Tray Menu
-              let menu = tauri::menu::MenuBuilder::new(app)
-                  .item(&show_i)
-                  .item(&quit_i)
-                  .build()?;
-
-              // Build Tray Icon
-              let _tray = tauri::tray::TrayIconBuilder::new()
+              // Build Tray Icon with custom ID "main" and register events
+              let _tray = tauri::tray::TrayIconBuilder::with_id("main")
                   .icon(app.default_window_icon().unwrap().clone())
-                  .menu(&menu)
-                  .on_menu_event(|app, event| {
-                      match event.id().as_ref() {
+                  .on_menu_event(|app: &tauri::AppHandle, event: tauri::menu::MenuEvent| {
+                      let id = event.id().as_ref();
+                      match id {
                           "quit" => {
                               app.exit(0);
                           }
@@ -406,10 +463,15 @@ impl ClipboardHandler for ClipboardMonitor {
                                   let _ = window.emit("window-shown", ());
                               }
                           }
-                          _ => {}
+                          "empty_placeholder" => {}
+                          clip_id => {
+                              if let Err(e) = copy_item_by_id(app, clip_id) {
+                                  eprintln!("Error copying item from tray menu: {}", e);
+                              }
+                          }
                       }
                   })
-                  .on_tray_icon_event(|tray, event| {
+                  .on_tray_icon_event(|tray: &tauri::tray::TrayIcon, event: tauri::tray::TrayIconEvent| {
                       if let tauri::tray::TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, .. } = event {
                           let app = tray.app_handle();
                           if let Some(window) = app.get_webview_window("main") {
@@ -426,6 +488,9 @@ impl ClipboardHandler for ClipboardMonitor {
                       }
                   })
                   .build(app)?;
+
+              // Populate initial tray menu items
+              let _ = update_tray_menu(app.handle());
 
               Ok(())
           })
