@@ -1,5 +1,6 @@
 mod security;
 mod config;
+mod database;
 
 use std::sync::Mutex;
 use std::thread;
@@ -44,8 +45,8 @@ impl From<ClipboardItem> for UIClipboardItem {
     }
 }
 
-#[derive(Default)]
 struct AppState {
+    db_path: std::path::PathBuf,
     history: Mutex<Vec<ClipboardItem>>,
     // Stores raw content of the last item written by the app itself
     // to prevent clipboard monitor feedback loops.
@@ -134,6 +135,20 @@ fn set_shortcut(app: AppHandle, shortcut_str: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn get_persist_sensitive(app: AppHandle) -> bool {
+    let config = config::load_config(&app);
+    config.persist_sensitive
+}
+
+#[tauri::command]
+fn set_persist_sensitive(app: AppHandle, value: bool) -> Result<(), String> {
+    let mut config = config::load_config(&app);
+    config.persist_sensitive = value;
+    config::save_config(&app, &config)?;
+    Ok(())
+}
+
 fn calculate_hash<T: Hash>(t: &T) -> u64 {
     let mut s = std::collections::hash_map::DefaultHasher::new();
     t.hash(&mut s);
@@ -212,10 +227,15 @@ impl ClipboardHandler for ClipboardMonitor {
                     {
                         let mut history = state.history.lock().unwrap();
                         history.insert(0, new_item.clone());
-                        if history.len() > 50 {
+                        if history.len() > 100 {
                             history.pop();
                         }
                     }
+
+                    // Save to SQLite & run cleanup
+                    let config = config::load_config(&self.app_handle);
+                    let _ = database::save_item(&state.db_path, &new_item, config.persist_sensitive);
+                    let _ = database::run_cleanup(&state.db_path);
 
                     let ui_item: UIClipboardItem = new_item.into();
                     let _ = self.app_handle.emit("clipboard-changed", ui_item);
@@ -239,105 +259,182 @@ impl ClipboardHandler for ClipboardMonitor {
                         last_w.as_ref() == Some(&png_base64)
                     };
 
-                    if is_own_write {
-                        let mut last_w = state.last_written.lock().unwrap();
-                        *last_w = None;
-                    } else {
-                        let new_item = ClipboardItem {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            raw_content: png_base64.clone(),
-                            display_content: format!("data:image/png;base64,{}", png_base64),
-                            content_type: "image".to_string(),
-                            sensitivity: security::Sensitivity::None,
-                            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
-                        };
+                      if is_own_write {
+                          let mut last_w = state.last_written.lock().unwrap();
+                          *last_w = None;
+                      } else {
+                          let new_item = ClipboardItem {
+                              id: uuid::Uuid::new_v4().to_string(),
+                              raw_content: png_base64.clone(),
+                              display_content: format!("data:image/png;base64,{}", png_base64),
+                              content_type: "image".to_string(),
+                              sensitivity: security::Sensitivity::None,
+                              timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+                          };
 
-                        {
-                            let mut history = state.history.lock().unwrap();
-                            history.insert(0, new_item.clone());
-                            if history.len() > 50 {
-                                history.pop();
-                            }
-                        }
+                          {
+                              let mut history = state.history.lock().unwrap();
+                              history.insert(0, new_item.clone());
+                              if history.len() > 100 {
+                                  history.pop();
+                              }
+                          }
 
-                        let ui_item: UIClipboardItem = new_item.into();
-                        let _ = self.app_handle.emit("clipboard-changed", ui_item);
-                    }
-                }
-            }
-        }
+                          // Save to SQLite & run cleanup
+                          let config = config::load_config(&self.app_handle);
+                          let _ = database::save_item(&state.db_path, &new_item, config.persist_sensitive);
+                          let _ = database::run_cleanup(&state.db_path);
 
-        CallbackResult::Next
-    }
+                          let ui_item: UIClipboardItem = new_item.into();
+                          let _ = self.app_handle.emit("clipboard-changed", ui_item);
+                      }
+                  }
+              }
+          }
 
-    fn on_clipboard_error(&mut self, _error: std::io::Error) -> CallbackResult {
-        CallbackResult::Next
-    }
-}
+          CallbackResult::Next
+      }
 
-fn start_clipboard_monitor(app_handle: AppHandle) {
-    thread::spawn(move || {
-        let monitor = ClipboardMonitor {
-            app_handle,
-            last_text: Mutex::new(String::new()),
-            last_image_hash: Mutex::new(None),
-        };
-        if let Ok(mut master) = Master::new(monitor) {
-            let _ = master.run();
-        }
-    });
-}
+      fn on_clipboard_error(&mut self, _error: std::io::Error) -> CallbackResult {
+          CallbackResult::Next
+      }
+  }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .manage(AppState::default())
-        .setup(|app| {
-            let handle = app.handle().clone();
-            start_clipboard_monitor(handle.clone());
+  fn start_clipboard_monitor(app_handle: AppHandle) {
+      thread::spawn(move || {
+          let monitor = ClipboardMonitor {
+              app_handle,
+              last_text: Mutex::new(String::new()),
+              last_image_hash: Mutex::new(None),
+          };
+          if let Ok(mut master) = Master::new(monitor) {
+              let _ = master.run();
+          }
+      });
+  }
 
-            // Initialize global shortcut plugin with window toggle handler
-            let global_shortcut_plugin = tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(move |app, shortcut, event| {
-                    if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                        let config = config::load_config(app);
-                        use std::str::FromStr;
-                        if let Ok(configured_shortcut) = Shortcut::from_str(&config.shortcut) {
-                            if shortcut == &configured_shortcut {
-                                if let Some(window) = app.get_webview_window("main") {
-                                    if let Ok(visible) = window.is_visible() {
-                                        if visible {
-                                            let _ = window.hide();
-                                        } else {
-                                            let _ = window.show();
-                                            let _ = window.set_focus();
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                })
-                .build();
+  #[cfg_attr(mobile, tauri::mobile_entry_point)]
+  pub fn run() {
+      tauri::Builder::default()
+          .plugin(tauri_plugin_opener::init())
+          .setup(|app| {
+              let handle = app.handle().clone();
 
-            app.handle().plugin(global_shortcut_plugin)?;
+              // 1. Resolve DB Path and Initialize DB
+              let db_path = handle.path()
+                  .resolve("history.db", tauri::path::BaseDirectory::AppData)
+                  .unwrap_or_else(|_| std::path::PathBuf::from("history.db"));
+              
+              let _ = database::init_db(&db_path);
+              let _ = database::run_cleanup(&db_path);
 
-            // Register initial shortcut from config
-            let config = config::load_config(&handle);
-            use std::str::FromStr;
-            if let Ok(initial_shortcut) = Shortcut::from_str(&config.shortcut) {
-                let _ = handle.global_shortcut().register(initial_shortcut);
-            }
+              // 2. Load History from SQLite
+              let loaded_history = database::load_history(&db_path).unwrap_or_default();
 
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
-            get_history,
-            copy_to_clipboard,
-            get_shortcut,
-            set_shortcut
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
-}
+              let app_state = AppState {
+                  db_path,
+                  history: Mutex::new(loaded_history),
+                  last_written: Mutex::new(None),
+              };
+              app.manage(app_state);
+
+              // 3. Start Clipboard Monitor
+              start_clipboard_monitor(handle.clone());
+
+              // 4. Initialize Global Shortcut Plugin with window toggle handler
+              let global_shortcut_plugin = tauri_plugin_global_shortcut::Builder::new()
+                  .with_handler(move |app, shortcut, event| {
+                      if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                          let config = config::load_config(app);
+                          use std::str::FromStr;
+                          if let Ok(configured_shortcut) = Shortcut::from_str(&config.shortcut) {
+                              if shortcut == &configured_shortcut {
+                                  if let Some(window) = app.get_webview_window("main") {
+                                      if let Ok(visible) = window.is_visible() {
+                                          if visible {
+                                              let _ = window.hide();
+                                          } else {
+                                              let _ = window.show();
+                                              let _ = window.set_focus();
+                                          }
+                                      }
+                                  }
+                              }
+                          }
+                      }
+                  })
+                  .build();
+
+              app.handle().plugin(global_shortcut_plugin)?;
+
+              // Register initial shortcut from config
+              let config = config::load_config(&handle);
+              use std::str::FromStr;
+              if let Ok(initial_shortcut) = Shortcut::from_str(&config.shortcut) {
+                  let _ = handle.global_shortcut().register(initial_shortcut);
+              }
+
+              // 5. Initialize System Tray Menu Items
+              let quit_i = tauri::menu::MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+              let show_i = tauri::menu::MenuItem::with_id(app, "show", "Show RustyBoard", true, None::<&str>)?;
+
+              // Build System Tray Menu
+              let menu = tauri::menu::MenuBuilder::new(app)
+                  .item(&show_i)
+                  .item(&quit_i)
+                  .build()?;
+
+              // Build Tray Icon
+              let _tray = tauri::tray::TrayIconBuilder::new()
+                  .icon(app.default_window_icon().unwrap().clone())
+                  .menu(&menu)
+                  .on_menu_event(|app, event| {
+                      match event.id().as_ref() {
+                          "quit" => {
+                              app.exit(0);
+                          }
+                          "show" => {
+                              if let Some(window) = app.get_webview_window("main") {
+                                  let _ = window.show();
+                                  let _ = window.set_focus();
+                              }
+                          }
+                          _ => {}
+                      }
+                  })
+                  .on_tray_icon_event(|tray, event| {
+                      if let tauri::tray::TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, .. } = event {
+                          let app = tray.app_handle();
+                          if let Some(window) = app.get_webview_window("main") {
+                              if let Ok(visible) = window.is_visible() {
+                                  if visible {
+                                      let _ = window.hide();
+                                  } else {
+                                      let _ = window.show();
+                                      let _ = window.set_focus();
+                                  }
+                              }
+                          }
+                      }
+                  })
+                  .build(app)?;
+
+              Ok(())
+          })
+          .on_window_event(|window, event| {
+              if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                  let _ = window.hide();
+                  api.prevent_close();
+              }
+          })
+          .invoke_handler(tauri::generate_handler![
+              get_history,
+              copy_to_clipboard,
+              get_shortcut,
+              set_shortcut,
+              get_persist_sensitive,
+              set_persist_sensitive
+          ])
+          .run(tauri::generate_context!())
+          .expect("error while running tauri application");
+  }

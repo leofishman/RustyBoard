@@ -8,12 +8,14 @@ use tauri::Manager;
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AppConfig {
     pub shortcut: String,
+    pub persist_sensitive: bool,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             shortcut: "ctrl+shift+v".to_string(),
+            persist_sensitive: false,
         }
     }
 }

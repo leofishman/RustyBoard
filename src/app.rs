@@ -291,9 +291,15 @@ fn ClipboardCard(item: UIClipboardItem, on_copy: Action<String, (), LocalStorage
     }
 }
 
+#[derive(Serialize)]
+struct PersistArgs {
+    value: bool,
+}
+
 #[component]
 pub fn App() -> impl IntoView {
     let (history, set_history) = signal(Vec::<UIClipboardItem>::new());
+    let (persist_sensitive, set_persist_sensitive) = signal(false);
 
     // 1. Initial Load of History
     Effect::new(move |_| {
@@ -305,7 +311,17 @@ pub fn App() -> impl IntoView {
         });
     });
 
-    // 2. Listen for Real-Time Clipboard Events
+    // 2. Initial Load of persist_sensitive configuration
+    Effect::new(move |_| {
+        spawn_local(async move {
+            let val = invoke("get_persist_sensitive", JsValue::UNDEFINED).await;
+            if let Some(b) = val.as_bool() {
+                set_persist_sensitive.set(b);
+            }
+        });
+    });
+
+    // 3. Listen for Real-Time Clipboard Events
     Effect::new(move |_| {
         let set_history = set_history.clone();
         let closure = Closure::<dyn Fn(JsValue)>::new(move |event_payload: JsValue| {
@@ -313,7 +329,7 @@ pub fn App() -> impl IntoView {
                 if let Ok(item) = serde_wasm_bindgen::from_value::<UIClipboardItem>(payload) {
                     set_history.update(|h| {
                         h.insert(0, item);
-                        if h.len() > 50 {
+                        if h.len() > 100 {
                             h.pop();
                         }
                     });
@@ -329,7 +345,7 @@ pub fn App() -> impl IntoView {
         });
     });
 
-    // 3. Action to Copy back to OS Clipboard (thread-local since futures are not Send)
+    // 4. Action to Copy back to OS Clipboard (thread-local since futures are not Send)
     let copy_item = Action::new_local(|id: &String| {
         let id = id.clone();
         async move {
@@ -338,6 +354,16 @@ pub fn App() -> impl IntoView {
         }
     });
 
+    // 5. Toggle persistence configuration
+    let handle_toggle = move |_| {
+        let next_val = !persist_sensitive.get();
+        set_persist_sensitive.set(next_val);
+        spawn_local(async move {
+            let args = serde_wasm_bindgen::to_value(&PersistArgs { value: next_val }).unwrap();
+            invoke("set_persist_sensitive", args).await;
+        });
+    };
+
     view! {
         <main class="container">
             <header class="header">
@@ -345,8 +371,14 @@ pub fn App() -> impl IntoView {
                     <h1>"RustyBoard"</h1>
                     <span class="shield">"🛡️ Security-First Active"</span>
                 </div>
-                <div class="stats">
-                    <span>"Active Clips: " {move || history.get().len()}</span>
+                <div class="settings-area">
+                    <label class="setting-toggle">
+                        <input type="checkbox" prop:checked=persist_sensitive on:change=handle_toggle />
+                        <span class="toggle-label">"Persist Sensitive Data"</span>
+                    </label>
+                    <div class="stats">
+                        <span>"Active Clips: " {move || history.get().len()}</span>
+                    </div>
                 </div>
             </header>
 
