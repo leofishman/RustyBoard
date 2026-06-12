@@ -29,5 +29,6 @@ base64 = "0.22"
 regex = "1.10"
 clipboard-master = "4"
 tauri-plugin-global-shortcut = "2"
+tauri-plugin-single-instance = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
