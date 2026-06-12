@@ -361,6 +361,7 @@ impl ClipboardHandler for ClipboardMonitor {
                                           } else {
                                               let _ = window.show();
                                               let _ = window.set_focus();
+                                              let _ = window.emit("window-shown", ());
                                           }
                                       }
                                   }
@@ -402,6 +403,7 @@ impl ClipboardHandler for ClipboardMonitor {
                               if let Some(window) = app.get_webview_window("main") {
                                   let _ = window.show();
                                   let _ = window.set_focus();
+                                  let _ = window.emit("window-shown", ());
                               }
                           }
                           _ => {}
@@ -417,6 +419,7 @@ impl ClipboardHandler for ClipboardMonitor {
                                   } else {
                                       let _ = window.show();
                                       let _ = window.set_focus();
+                                      let _ = window.emit("window-shown", ());
                                   }
                               }
                           }

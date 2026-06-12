@@ -331,6 +331,25 @@ pub fn App() -> impl IntoView {
         });
     });
 
+    // 1b. Listen for window-shown events to refresh history
+    Effect::new(move |_| {
+        let closure = Closure::<dyn Fn(JsValue)>::new(move |_| {
+            spawn_local(async move {
+                let val = invoke("get_history", JsValue::UNDEFINED).await;
+                if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<UIClipboardItem>>(val) {
+                    set_history.set(items);
+                }
+            });
+        });
+
+        let handler = closure.as_ref().unchecked_ref::<js_sys::Function>().clone();
+        closure.forget();
+
+        spawn_local(async move {
+            listen("window-shown", &handler).await;
+        });
+    });
+
     // 2. Initial Load of persist_level configuration
     Effect::new(move |_| {
         spawn_local(async move {
