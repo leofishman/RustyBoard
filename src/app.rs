@@ -12,6 +12,9 @@ extern "C" {
 
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"])]
     async fn listen(event: &str, handler: &js_sys::Function) -> JsValue;
+
+    #[wasm_bindgen(js_name = renderMermaid)]
+    fn render_mermaid(element_id: &str, code: &str);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -70,6 +73,17 @@ fn format_timestamp(timestamp: u64) -> String {
             date.get_full_year()
         )
     }
+}
+
+fn render_markdown(md: &str) -> String {
+    // Escape raw HTML inside MD first
+    let escaped = md.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    let parser = pulldown_cmark::Parser::new(&escaped);
+    let mut html_output = String::new();
+    pulldown_cmark::html::push_html(&mut html_output, parser);
+    html_output
 }
 
 #[component]
@@ -133,6 +147,8 @@ fn ClipboardCard(item: UIClipboardItem, on_copy: Action<String, (), LocalStorage
                                 DetectedType::Svg => "tag tag-svg",
                                 DetectedType::Url => "tag tag-url",
                                 DetectedType::Json => "tag tag-json",
+                                DetectedType::Mermaid => "tag tag-mermaid",
+                                DetectedType::Markdown => "tag tag-markdown",
                                 DetectedType::Text => "tag tag-text",
                             }
                         }
@@ -145,6 +161,8 @@ fn ClipboardCard(item: UIClipboardItem, on_copy: Action<String, (), LocalStorage
                                     DetectedType::Svg => "SVG",
                                     DetectedType::Url => "URL",
                                     DetectedType::Json => "JSON",
+                                    DetectedType::Mermaid => "MERMAID",
+                                    DetectedType::Markdown => "MARKDOWN",
                                     DetectedType::Text => "TEXT",
                                 }
                             }
@@ -206,6 +224,40 @@ fn ClipboardCard(item: UIClipboardItem, on_copy: Action<String, (), LocalStorage
                                 };
                                 view! {
                                     <pre class="json-code"><code>{formatted}</code></pre>
+                                }.into_any()
+                            }
+                            DetectedType::Markdown => {
+                                let html = render_markdown(&dc_body);
+                                view! {
+                                    <div class="markdown-preview" inner_html=html></div>
+                                }.into_any()
+                            }
+                            DetectedType::Mermaid => {
+                                let el_id = format!("mermaid-{}", id);
+                                let code = if dc_body.starts_with("```mermaid") && dc_body.ends_with("```") {
+                                    let lines: Vec<&str> = dc_body.lines().collect();
+                                    if lines.len() >= 3 {
+                                        lines[1..lines.len()-1].join("\n")
+                                    } else {
+                                        dc_body.clone()
+                                    }
+                                } else {
+                                    dc_body.clone()
+                                };
+
+                                let el_id_effect = el_id.clone();
+                                Effect::new(move |_| {
+                                    let code = code.clone();
+                                    let el_id = el_id_effect.clone();
+                                    set_timeout(move || {
+                                        render_mermaid(&el_id, &code);
+                                      }, 50);
+                                });
+
+                                view! {
+                                    <div id=el_id class="mermaid-container">
+                                        <div class="mermaid-loading">"Rendering diagram..."</div>
+                                    </div>
                                 }.into_any()
                             }
                             DetectedType::Text => {

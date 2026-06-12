@@ -2,10 +2,38 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Tauri + Leptos App</title>
+    <title>RustyBoard</title>
     <link data-trunk rel="css" href="styles.css" />
     <link data-trunk rel="copy-dir" href="public" />
     <link data-trunk rel="rust" data-wasm-opt="z" />
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script>
+      if (window.mermaid) {
+        window.mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+      }
+      window.renderMermaid = (elementId, code) => {
+        if (window.mermaid) {
+          try {
+            window.mermaid.render(elementId + "-svg", code)
+              .then(({ svg }) => {
+                const el = document.getElementById(elementId);
+                if (el) {
+                  el.innerHTML = svg;
+                }
+              })
+              .catch(err => {
+                console.error(err);
+                const el = document.getElementById(elementId);
+                if (el) {
+                  el.innerHTML = "<div class='mermaid-error'>Failed to render Mermaid diagram. Check syntax.</div>";
+                }
+              });
+          } catch (e) {
+            console.error(e);
+          }
+        }
+      };
+    </script>
   </head>
   <body></body>
 </html>
