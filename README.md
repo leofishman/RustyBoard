@@ -21,11 +21,14 @@ RustyBoard is designed around a zero-trust model for clipboard data:
    - `Credential`: API keys, auth tokens. Masked by default in the UI with a reveal toggle.
    - `Personal`: Emails and phone numbers. Styled with a privacy indicator.
    - `None`: Normal text, links, and images.
+4. **Tauri Isolation Pattern**:
+   A secure, isolated JavaScript sandboxed iframe is introduced between the main frontend WebView and the Rust core. All IPC payloads are intercepted, verified, and AES-GCM encrypted. This ensures that even if a frontend dependency is compromised, it cannot execute arbitrary backend calls or bypass parameters validation.
 
 ---
 
 ## ✨ Features
 
+- **Tauri Isolation Sandbox**: Intercepts IPC messages dynamically to validate arguments (such as verifying that a dynamic hotkey string is under 50 characters) before passing them to the system.
 - **Event-Driven Clipboard Monitoring**: Uses `clipboard-master` to hook into native OS events (XFixes selection events on Linux X11, `WM_CLIPBOARDUPDATE` on Windows, and NSPasteboard `changeCount` on macOS). This ensures **0% CPU utilization** when the clipboard is idle.
 - **Configurable Global Shortcuts**: Features hotkey integration via `tauri-plugin-global-shortcut` to toggle the visibility of the primary window. Custom hotkeys are validated and registered dynamically at runtime.
 - **Persistent Settings**: Automatically loads and stores your customized shortcut configuration inside `config.json` in the user's config directory.
@@ -65,4 +68,5 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 - [x] **Phase 2: Backend & IPC Commands** (Clipboard polling, Double Channel storage, feedback loop suppression).
 - [x] **Phase 3: Frontend & Extensible Detectors** (Leptos event listening, dynamic card layouts, dark CSS theme).
 - [x] **Phase 4: Event-Driven Clipboard & Configurable Shortcuts** (Zero-CPU idle monitor, persistent config file, dynamic window toggle hotkey).
-- [ ] **Phase 5: Secure Local Storage** (SQLite local storage, master key integration with OS keyring, and automatic TTL pruning).
+- [x] **Phase 5: Tauri Isolation Pattern** (Secure JS iframe sandbox, IPC interception, dynamic argument validation, and payload encryption).
+- [ ] **Phase 6: Secure Local Storage** (SQLite local storage, master key integration with OS keyring, and automatic TTL pruning).
