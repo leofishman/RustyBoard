@@ -136,15 +136,20 @@ fn set_shortcut(app: AppHandle, shortcut_str: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn get_persist_sensitive(app: AppHandle) -> bool {
+fn get_persist_level(app: AppHandle) -> String {
     let config = config::load_config(&app);
-    config.persist_sensitive
+    format!("{:?}", config.persist_level)
 }
 
 #[tauri::command]
-fn set_persist_sensitive(app: AppHandle, value: bool) -> Result<(), String> {
+fn set_persist_level(app: AppHandle, value: String) -> Result<(), String> {
     let mut config = config::load_config(&app);
-    config.persist_sensitive = value;
+    let level = match value.as_str() {
+        "Sensitive" => config::PersistLevel::Sensitive,
+        "All" => config::PersistLevel::All,
+        _ => config::PersistLevel::None,
+    };
+    config.persist_level = level;
     config::save_config(&app, &config)?;
     Ok(())
 }
@@ -234,7 +239,7 @@ impl ClipboardHandler for ClipboardMonitor {
 
                     // Save to SQLite & run cleanup
                     let config = config::load_config(&self.app_handle);
-                    let _ = database::save_item(&state.db_path, &new_item, config.persist_sensitive);
+                    let _ = database::save_item(&state.db_path, &new_item, config.persist_level);
                     let _ = database::run_cleanup(&state.db_path);
 
                     let ui_item: UIClipboardItem = new_item.into();
@@ -282,7 +287,7 @@ impl ClipboardHandler for ClipboardMonitor {
 
                           // Save to SQLite & run cleanup
                           let config = config::load_config(&self.app_handle);
-                          let _ = database::save_item(&state.db_path, &new_item, config.persist_sensitive);
+                          let _ = database::save_item(&state.db_path, &new_item, config.persist_level);
                           let _ = database::run_cleanup(&state.db_path);
 
                           let ui_item: UIClipboardItem = new_item.into();
@@ -432,8 +437,8 @@ impl ClipboardHandler for ClipboardMonitor {
               copy_to_clipboard,
               get_shortcut,
               set_shortcut,
-              get_persist_sensitive,
-              set_persist_sensitive
+              get_persist_level,
+              set_persist_level
           ])
           .run(tauri::generate_context!())
           .expect("error while running tauri application");

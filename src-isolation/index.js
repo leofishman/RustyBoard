@@ -10,9 +10,10 @@ window.__TAURI_ISOLATION_HOOK__ = (payload) => {
     }
   }
 
-  if (payload.cmd === "set_persist_sensitive") {
-    if (typeof payload.value !== "boolean") {
-      throw new Error("[Isolation Hook] Invalid value format for set_persist_sensitive");
+  if (payload.cmd === "set_persist_level") {
+    const validLevels = ["None", "Sensitive", "All"];
+    if (!validLevels.includes(payload.value)) {
+      throw new Error("[Isolation Hook] Invalid value format for set_persist_level");
     }
   }
 

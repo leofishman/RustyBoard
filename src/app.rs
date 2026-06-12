@@ -292,14 +292,15 @@ fn ClipboardCard(item: UIClipboardItem, on_copy: Action<String, (), LocalStorage
 }
 
 #[derive(Serialize)]
-struct PersistArgs {
-    value: bool,
+struct LevelArgs {
+    value: String,
 }
 
 #[component]
 pub fn App() -> impl IntoView {
     let (history, set_history) = signal(Vec::<UIClipboardItem>::new());
-    let (persist_sensitive, set_persist_sensitive) = signal(false);
+    let (persist_level, set_persist_level) = signal("None".to_string());
+    let (show_confirm_modal, set_show_confirm_modal) = signal(false);
 
     // 1. Initial Load of History
     Effect::new(move |_| {
@@ -311,12 +312,12 @@ pub fn App() -> impl IntoView {
         });
     });
 
-    // 2. Initial Load of persist_sensitive configuration
+    // 2. Initial Load of persist_level configuration
     Effect::new(move |_| {
         spawn_local(async move {
-            let val = invoke("get_persist_sensitive", JsValue::UNDEFINED).await;
-            if let Some(b) = val.as_bool() {
-                set_persist_sensitive.set(b);
+            let val = invoke("get_persist_level", JsValue::UNDEFINED).await;
+            if let Some(s) = val.as_string() {
+                set_persist_level.set(s);
             }
         });
     });
@@ -354,14 +355,36 @@ pub fn App() -> impl IntoView {
         }
     });
 
-    // 5. Toggle persistence configuration
-    let handle_toggle = move |_| {
-        let next_val = !persist_sensitive.get();
-        set_persist_sensitive.set(next_val);
+    // 5. Select dropdown change handler
+    let handle_level_change = move |ev: leptos::ev::Event| {
+        let value = event_target_value(&ev);
+        if value == "All" {
+            // Show warnings/risk confirmation dialog first!
+            set_show_confirm_modal.set(true);
+        } else {
+            set_persist_level.set(value.clone());
+            spawn_local(async move {
+                let args = serde_wasm_bindgen::to_value(&LevelArgs { value }).unwrap();
+                invoke("set_persist_level", args).await;
+            });
+        }
+    };
+
+    let confirm_all_persistence = move |_| {
+        set_show_confirm_modal.set(false);
+        set_persist_level.set("All".to_string());
         spawn_local(async move {
-            let args = serde_wasm_bindgen::to_value(&PersistArgs { value: next_val }).unwrap();
-            invoke("set_persist_sensitive", args).await;
+            let args = serde_wasm_bindgen::to_value(&LevelArgs { value: "All".to_string() }).unwrap();
+            invoke("set_persist_level", args).await;
         });
+    };
+
+    let cancel_all_persistence = move |_| {
+        set_show_confirm_modal.set(false);
+        // Force Leptos to reset the select elements' selected attribute back to actual value
+        let current = persist_level.get();
+        set_persist_level.set(String::new());
+        set_persist_level.set(current);
     };
 
     view! {
@@ -372,9 +395,12 @@ pub fn App() -> impl IntoView {
                     <span class="shield">"🛡️ Security-First Active"</span>
                 </div>
                 <div class="settings-area">
-                    <label class="setting-toggle">
-                        <input type="checkbox" prop:checked=persist_sensitive on:change=handle_toggle />
-                        <span class="toggle-label">"Persist Sensitive Data"</span>
+                    <label class="setting-label">
+                        <select class="settings-select" prop:value=persist_level on:change=handle_level_change>
+                            <option value="None">"Secure (No Sensitive)"</option>
+                            <option value="Sensitive">"Sensitive (No Secrets)"</option>
+                            <option value="All">"Paranoid (Persist Secrets)"</option>
+                        </select>
                     </label>
                     <div class="stats">
                         <span>"Active Clips: " {move || history.get().len()}</span>
@@ -407,6 +433,39 @@ pub fn App() -> impl IntoView {
                     }
                 }}
             </div>
+
+            {move || {
+                if show_confirm_modal.get() {
+                    view! {
+                        <div class="modal-overlay">
+                            <div class="modal-card">
+                                <div class="modal-header">
+                                    <span class="warning-icon">"⚠️"</span>
+                                    <h2>"High Security Warning"</h2>
+                                </div>
+                                <div class="modal-body">
+                                    <p>"You are about to enable persistence for Secret items."</p>
+                                    <div class="modal-alert">
+                                        "This includes plain-text passwords, private keys, credit cards, and other tokens. "
+                                        "If your system is compromised or if someone gains physical access to your unencrypted disk, they will be able to read these secrets."
+                                    </div>
+                                    <p>"Are you absolutely sure you want to proceed?"</p>
+                                </div>
+                                <div class="modal-footer">
+                                    <button class="btn btn-secondary" on:click=cancel_all_persistence>
+                                        "Cancel"
+                                    </button>
+                                    <button class="btn btn-danger" on:click=confirm_all_persistence>
+                                        "Yes, Persist Secrets"
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }
+            }}
         </main>
     }
 }

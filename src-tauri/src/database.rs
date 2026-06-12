@@ -2,6 +2,7 @@ use rusqlite::{params, Connection};
 use std::path::Path;
 use crate::ClipboardItem;
 use crate::security::Sensitivity;
+use crate::config::PersistLevel;
 
 pub fn init_db(db_path: &Path) -> Result<(), String> {
     if let Some(parent) = db_path.parent() {
@@ -22,14 +23,14 @@ pub fn init_db(db_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub fn save_item(db_path: &Path, item: &ClipboardItem, persist_sensitive: bool) -> Result<(), String> {
-    // SECURITY: Never persist Secret items to disk
-    if item.sensitivity == Sensitivity::Secret {
-        return Ok(());
-    }
+pub fn save_item(db_path: &Path, item: &ClipboardItem, level: PersistLevel) -> Result<(), String> {
+    let should_save = match level {
+        PersistLevel::None => item.sensitivity == Sensitivity::None,
+        PersistLevel::Sensitive => item.sensitivity != Sensitivity::Secret,
+        PersistLevel::All => true,
+    };
 
-    // SECURITY: If persist_sensitive is false, only allow Sensitivity::None
-    if !persist_sensitive && item.sensitivity != Sensitivity::None {
+    if !should_save {
         return Ok(());
     }
 
@@ -135,30 +136,35 @@ mod tests {
 
         assert!(init_db(&db_path).is_ok());
 
-        // 1. None sensitivity item - should always persist
+        // 1. None level - only None sensitivity persists
         let item_none = get_dummy_item("id_none", Sensitivity::None, 1000);
-        assert!(save_item(&db_path, &item_none, false).is_ok());
+        let item_personal = get_dummy_item("id_personal", Sensitivity::Personal, 1001);
+        let item_secret = get_dummy_item("id_secret", Sensitivity::Secret, 1002);
+        
+        assert!(save_item(&db_path, &item_none, PersistLevel::None).is_ok());
+        assert!(save_item(&db_path, &item_personal, PersistLevel::None).is_ok());
+        assert!(save_item(&db_path, &item_secret, PersistLevel::None).is_ok());
+        
         let history = load_history(&db_path).unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].id, "id_none");
 
-        // 2. Secret item - should NEVER persist (regardless of flag)
-        let item_secret = get_dummy_item("id_secret", Sensitivity::Secret, 1002);
-        assert!(save_item(&db_path, &item_secret, true).is_ok());
-        let history = load_history(&db_path).unwrap();
-        assert_eq!(history.len(), 1); // still only 1 item
+        // 2. Sensitive level - None and Personal/Credential persist, Secret does not
+        let item_cred = get_dummy_item("id_cred", Sensitivity::Credential, 1003);
+        assert!(save_item(&db_path, &item_personal, PersistLevel::Sensitive).is_ok());
+        assert!(save_item(&db_path, &item_cred, PersistLevel::Sensitive).is_ok());
+        assert!(save_item(&db_path, &item_secret, PersistLevel::Sensitive).is_ok());
 
-        // 3. Credential item with persist_sensitive = false - should not persist
-        let item_cred = get_dummy_item("id_cred_no", Sensitivity::Credential, 1003);
-        assert!(save_item(&db_path, &item_cred, false).is_ok());
         let history = load_history(&db_path).unwrap();
-        assert_eq!(history.len(), 1); // still only 1 item
+        // None (from test 1), Personal, Credential
+        assert_eq!(history.len(), 3);
+        assert!(!history.iter().any(|x| x.id == "id_secret"));
 
-        // 4. Credential item with persist_sensitive = true - should persist
-        let item_cred_yes = get_dummy_item("id_cred_yes", Sensitivity::Credential, 1004);
-        assert!(save_item(&db_path, &item_cred_yes, true).is_ok());
+        // 3. All level - everything persists including secrets
+        assert!(save_item(&db_path, &item_secret, PersistLevel::All).is_ok());
         let history = load_history(&db_path).unwrap();
-        assert_eq!(history.len(), 2);
+        assert_eq!(history.len(), 4);
+        assert!(history.iter().any(|x| x.id == "id_secret"));
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -182,9 +188,9 @@ mod tests {
         // Regular item (older than 2 hours)
         let old_none = get_dummy_item("old_none", Sensitivity::None, now - 8000);
 
-        assert!(save_item(&db_path, &old_cred, true).is_ok());
-        assert!(save_item(&db_path, &new_cred, true).is_ok());
-        assert!(save_item(&db_path, &old_none, true).is_ok());
+        assert!(save_item(&db_path, &old_cred, PersistLevel::Sensitive).is_ok());
+        assert!(save_item(&db_path, &new_cred, PersistLevel::Sensitive).is_ok());
+        assert!(save_item(&db_path, &old_none, PersistLevel::Sensitive).is_ok());
 
         assert!(run_cleanup(&db_path).is_ok());
 

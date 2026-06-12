@@ -5,17 +5,24 @@ use tauri::AppHandle;
 use tauri::path::BaseDirectory;
 use tauri::Manager;
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PersistLevel {
+    None,      // Persist only Sensitivity::None (default)
+    Sensitive, // Persist None, Personal, and Credential (with TTL). No Secrets.
+    All,       // Persist everything, including Secrets.
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AppConfig {
     pub shortcut: String,
-    pub persist_sensitive: bool,
+    pub persist_level: PersistLevel,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             shortcut: "ctrl+shift+v".to_string(),
-            persist_sensitive: false,
+            persist_level: PersistLevel::None,
         }
     }
 }
