@@ -39,7 +39,13 @@ RustyBoard is designed around a zero-trust model for clipboard data:
   - **JSON**: Formats and beautifies code blocks.
   - **URL**: Displays interactive clickable links.
   - **TEXT**: Displays wrapped multi-line text blocks.
-- **Premium UI**: Styled with a dark glassmorphism theme, custom tags, and interactive action buttons.
+- **SQLite Database Persistence**: Stores history locally on disk with configurable levels:
+  - **Secure**: Persists only non-sensitive clips (default).
+  - **Sensitive**: Persists credentials (with a 2-hour TTL expiration) and personal details.
+  - **Paranoid**: Persists everything, including secrets, after presenting a warning confirmation modal.
+- **Markdown & Mermaid Rendering**: Native compiler for styled Markdown text and live rendering of dynamic Mermaid graphs (flowcharts, state diagrams).
+- **System Tray Background Daemon**: Intercepts close events to hide the app to the system tray, allowing it to run in the background. Left-clicking the icon toggles visibility.
+- **Premium UI**: Styled with a dark glassmorphism theme, custom tags, dynamic confirmation dialogs, and interactive action buttons.
 
 ---
 
@@ -55,7 +61,7 @@ cargo tauri dev
 ```
 
 ### Running Backend Unit Tests
-To verify security filters and sanitization rules:
+To verify security filters, database rules, and sanitization models:
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
@@ -69,4 +75,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 - [x] **Phase 3: Frontend & Extensible Detectors** (Leptos event listening, dynamic card layouts, dark CSS theme).
 - [x] **Phase 4: Event-Driven Clipboard & Configurable Shortcuts** (Zero-CPU idle monitor, persistent config file, dynamic window toggle hotkey).
 - [x] **Phase 5: Tauri Isolation Pattern** (Secure JS iframe sandbox, IPC interception, dynamic argument validation, and payload encryption).
-- [ ] **Phase 6: Secure Local Storage** (SQLite local storage, master key integration with OS keyring, and automatic TTL pruning).
+- [x] **Phase 6: Secure Local Storage** (SQLite local storage, configurable persistence levels, and automatic TTL pruning).
+- [x] **Phase 7: Markdown & Mermaid Rendering** (Safe native Markdown compilation, dynamic inline Mermaid vector diagrams).
+- [x] **Phase 8: Persistence & System Tray** (System tray daemon mode, window-close interception to tray, and warning modal for advanced persistence).
+
