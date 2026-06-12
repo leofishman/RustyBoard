@@ -90,6 +90,7 @@ fn render_markdown(md: &str) -> String {
 fn ClipboardCard(item: UIClipboardItem, on_copy: Action<String, (), LocalStorage>) -> impl IntoView {
     let (revealed, set_revealed) = signal(false);
     let (copied_indicator, set_copied_indicator) = signal(false);
+    let (view_raw, set_view_raw) = signal(false);
 
     let id = item.id.clone();
     let content_type = item.content_type.clone();
@@ -125,6 +126,7 @@ fn ClipboardCard(item: UIClipboardItem, on_copy: Action<String, (), LocalStorage
     let ct_body = content_type.clone();
     let dt_body = detected_type;
     let dc_body = display_content.clone();
+    let ct_footer = content_type.clone();
 
     view! {
         <div class=move || {
@@ -203,6 +205,10 @@ fn ClipboardCard(item: UIClipboardItem, on_copy: Action<String, (), LocalStorage
                                 <img src=dc_body.clone() alt="Captured Clip" />
                             </div>
                         }.into_any()
+                    } else if view_raw.get() {
+                        view! {
+                            <pre class="text-content">{dc_body.clone()}</pre>
+                        }.into_any()
                     } else {
                         match dt_body {
                             DetectedType::Svg => {
@@ -280,6 +286,19 @@ fn ClipboardCard(item: UIClipboardItem, on_copy: Action<String, (), LocalStorage
                         }.into_any()
                     } else {
                         ().into_any()
+                    }}
+
+                    {move || {
+                        let is_switchable = ct_footer == "text" && matches!(dt_class, DetectedType::Markdown | DetectedType::Mermaid | DetectedType::Json | DetectedType::Svg);
+                        if is_switchable {
+                            view! {
+                                <button class="btn btn-secondary" on:click=move |_| set_view_raw.update(|r| *r = !*r)>
+                                    {move || if view_raw.get() { "👁️ Preview" } else { "📝 Raw" }}
+                                </button>
+                            }.into_any()
+                        } else {
+                            ().into_any()
+                        }
                     }}
 
                     <button class="btn btn-primary" on:click=handle_copy>
