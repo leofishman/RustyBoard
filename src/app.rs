@@ -435,9 +435,9 @@ pub fn App() -> impl IntoView {
                 <div class="settings-area">
                     <label class="setting-label">
                         <select class="settings-select" prop:value=persist_level on:change=handle_level_change>
-                            <option value="None">"Secure (No Sensitive)"</option>
-                            <option value="Sensitive">"Sensitive (No Secrets)"</option>
-                            <option value="All">"Paranoid (Persist Secrets)"</option>
+                            <option value="None">"Paranoid (Strict - No Sensitive Data)"</option>
+                            <option value="Sensitive">"Balanced (Credentials with TTL)"</option>
+                            <option value="All">"Unrestricted (Persist Secrets)"</option>
                         </select>
                     </label>
                     <div class="stats">

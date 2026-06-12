@@ -40,9 +40,9 @@ RustyBoard is designed around a zero-trust model for clipboard data:
   - **URL**: Displays interactive clickable links.
   - **TEXT**: Displays wrapped multi-line text blocks.
 - **SQLite Database Persistence**: Stores history locally on disk with configurable levels:
-  - **Secure**: Persists only non-sensitive clips (default).
-  - **Sensitive**: Persists credentials (with a 2-hour TTL expiration) and personal details.
-  - **Paranoid**: Persists everything, including secrets, after presenting a warning confirmation modal.
+  - **Paranoid**: Persists only non-sensitive clips (default).
+  - **Balanced**: Persists credentials (with a 2-hour TTL expiration) and personal details.
+  - **Unrestricted**: Persists everything, including secrets, after presenting a warning confirmation modal.
 - **Markdown & Mermaid Rendering**: Native compiler for styled Markdown text and live rendering of dynamic Mermaid graphs (flowcharts, state diagrams).
 - **Preview/Raw Toggle**: Allows cards with specialized formatting (Markdown, Mermaid, JSON, SVG) to be dynamically toggled between raw source code/markup and rendered graphical views.
 - **Dynamic System Tray Clipboard Menu (Diodon-style)**: Lists the 15 most recent clipboard history entries directly in the tray menu (featuring newline cleanup, truncation, media indicators, and secure credential masking). Selecting any item copies it back to the active OS clipboard.
