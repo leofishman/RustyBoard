@@ -39,6 +39,20 @@ struct CopyArgs {
     id: String,
 }
 
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
+pub struct PluginDefinition {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RunPluginArgs {
+    plugin_id: String,
+    item_id: String,
+}
+
 fn set_timeout<F: FnOnce() + 'static>(f: F, ms: i32) {
     if let Some(window) = leptos::web_sys::window() {
         let js_func = Closure::once_into_js(f);
@@ -87,12 +101,20 @@ fn render_markdown(md: &str) -> String {
 }
 
 #[component]
-fn ClipboardCard(item: UIClipboardItem, on_copy: Action<String, (), LocalStorage>) -> impl IntoView {
+fn ClipboardCard(
+    item: UIClipboardItem,
+    on_copy: Action<String, (), LocalStorage>,
+    plugins: Signal<Vec<PluginDefinition>>,
+    on_run_plugin: Action<(String, String), (), LocalStorage>
+) -> impl IntoView {
     let (revealed, set_revealed) = signal(false);
     let (copied_indicator, set_copied_indicator) = signal(false);
     let (view_raw, set_view_raw) = signal(false);
+    let (show_plugins, set_show_plugins) = signal(false);
 
     let id = item.id.clone();
+    let id_mermaid = item.id.clone();
+    let id_plugin = item.id.clone();
     let content_type = item.content_type.clone();
     let display_content = item.display_content.clone();
     let sensitivity = item.sensitivity;
@@ -127,6 +149,7 @@ fn ClipboardCard(item: UIClipboardItem, on_copy: Action<String, (), LocalStorage
     let dt_body = detected_type;
     let dc_body = display_content.clone();
     let ct_footer = content_type.clone();
+    let ct_plugin = content_type.clone();
 
     view! {
         <div class=move || {
@@ -239,7 +262,7 @@ fn ClipboardCard(item: UIClipboardItem, on_copy: Action<String, (), LocalStorage
                                 }.into_any()
                             }
                             DetectedType::Mermaid => {
-                                let el_id = format!("mermaid-{}", id);
+                                let el_id = format!("mermaid-{}", id_mermaid);
                                 let code = if dc_body.starts_with("```mermaid") && dc_body.ends_with("```") {
                                     let lines: Vec<&str> = dc_body.lines().collect();
                                     if lines.len() >= 3 {
@@ -304,6 +327,58 @@ fn ClipboardCard(item: UIClipboardItem, on_copy: Action<String, (), LocalStorage
                     <button class="btn btn-primary" on:click=handle_copy>
                         {move || if copied_indicator.get() { "✓ Copied!" } else { "📋 Copy" }}
                     </button>
+
+                    {
+                        let id_clone = id_plugin.clone();
+                        let ct_plugin_clone = ct_plugin.clone();
+                        move || {
+                            let current_id = id_clone.clone();
+                            if ct_plugin_clone == "text" && !plugins.get().is_empty() {
+                                view! {
+                                    <div class="plugin-dropdown">
+                                        <button class="btn btn-tertiary" on:click=move |_| set_show_plugins.update(|s| *s = !*s)>
+                                            "🔌 Plugins"
+                                        </button>
+                                        {
+                                            let cur_id_2 = current_id.clone();
+                                            move || {
+                                                let cid3 = cur_id_2.clone();
+                                                if show_plugins.get() {
+                                                    view! {
+                                                        <div class="plugin-menu">
+                                                            <For
+                                                                each=move || plugins.get()
+                                                                key=|p| p.id.clone()
+                                                                children=move |p| {
+                                                                    let pid = p.id.clone();
+                                                                    let iid = cid3.clone();
+                                                                    let name = p.name.clone();
+                                                                    let desc = p.description.clone();
+                                                                    let on_run_plugin_clone = on_run_plugin.clone();
+                                                                    view! {
+                                                                        <button class="plugin-item" title=desc on:click=move |_| {
+                                                                            set_show_plugins.set(false);
+                                                                            on_run_plugin_clone.dispatch((pid.clone(), iid.clone()));
+                                                                        }>
+                                                                            {name}
+                                                                        </button>
+                                                                    }
+                                                                }
+                                                            />
+                                                        </div>
+                                                    }.into_any()
+                                                } else {
+                                                    ().into_any()
+                                                }
+                                            }
+                                        }
+                                    </div>
+                                }.into_any()
+                            } else {
+                                ().into_any()
+                            }
+                        }
+                    }
                 </div>
             </div>
         </div>
@@ -320,13 +395,19 @@ pub fn App() -> impl IntoView {
     let (history, set_history) = signal(Vec::<UIClipboardItem>::new());
     let (persist_level, set_persist_level) = signal("None".to_string());
     let (show_confirm_modal, set_show_confirm_modal) = signal(false);
+    let (plugins, set_plugins) = signal(Vec::<PluginDefinition>::new());
 
-    // 1. Initial Load of History
+    // 1. Initial Load of History and Plugins
     Effect::new(move |_| {
         spawn_local(async move {
             let val = invoke("get_history", JsValue::UNDEFINED).await;
             if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<UIClipboardItem>>(val) {
                 set_history.set(items);
+            }
+
+            let val = invoke("get_plugins", JsValue::UNDEFINED).await;
+            if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<PluginDefinition>>(val) {
+                set_plugins.set(items);
             }
         });
     });
@@ -390,6 +471,16 @@ pub fn App() -> impl IntoView {
         async move {
             let args = serde_wasm_bindgen::to_value(&CopyArgs { id }).unwrap();
             invoke("copy_to_clipboard", args).await;
+        }
+    });
+
+    // 4b. Action to Run Plugin
+    let run_plugin = Action::new_local(|args: &(String, String)| {
+        let plugin_id = args.0.clone();
+        let item_id = args.1.clone();
+        async move {
+            let invoke_args = serde_wasm_bindgen::to_value(&RunPluginArgs { plugin_id, item_id }).unwrap();
+            let _ = invoke("run_plugin", invoke_args).await;
         }
     });
 
@@ -463,7 +554,7 @@ pub fn App() -> impl IntoView {
                                 key=|item| item.id.clone()
                                 children=move |item| {
                                     view! {
-                                        <ClipboardCard item=item.clone() on_copy=copy_item />
+                                        <ClipboardCard item=item.clone() on_copy=copy_item plugins=plugins.into() on_run_plugin=run_plugin />
                                     }
                                 }
                             />

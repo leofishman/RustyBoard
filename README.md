@@ -82,4 +82,39 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 - [x] **Phase 7: Markdown & Mermaid Rendering** (Safe native Markdown compilation, dynamic inline Mermaid vector diagrams).
 - [x] **Phase 8: Persistence & System Tray** (System tray daemon mode, window-close interception to tray, and warning modal for advanced persistence).
 - [x] **Phase 9: Dynamic Tray History & Preview/Raw Switching** (Diodon-style tray menu items, click-to-copy from tray, card view toggling, and reload on focus).
+- [x] **Phase 10: External Plugin System** (Extensible CLI-based plugin system to run external tools on clipboard contents like Fabric AI).
+
+---
+
+## 🔌 Plugins
+
+RustyBoard supports an extensible plugin system that allows the community to build custom commands using external CLI tools.
+Plugins are defined using simple `.json` files placed in the `plugins/` directory within your app's configuration folder (e.g. `~/.config/rustyboard/plugins/`).
+
+### How It Works
+
+When a plugin is invoked, RustyBoard takes the *raw text content* of the clipboard item and pipes it directly into the `stdin` of the defined command. The `stdout` of that command is then safely captured, sanitized, and injected back into RustyBoard as a brand new clipboard entry!
+
+### Example: Fabric AI Integration
+
+You can easily integrate external AI workflows, like [Fabric](https://github.com/danielmiessler/fabric), by creating a `fabric-summary.json` file in the plugins folder:
+
+```json
+{
+  "id": "fabric-summary",
+  "name": "Summarize with Fabric AI",
+  "description": "Uses Fabric AI to summarize the copied text",
+  "command": "fabric",
+  "args": ["-p", "summarize"]
+}
+```
+
+Now, any text you copy can be summarized with a single click from the UI! The community is encouraged to create and share their own custom `.json` plugins.
+
+### Example Plugins included
+
+We have included some fully commented examples inside the `src-tauri/plugins/examples` folder to help you get started:
+1. `translator.py`: A python script that uses `googletrans` to translate the clipboard content to English.
+2. `dictionary.sh`: A bash script that takes a single word and fetches its definition from a free dictionary API, returning Markdown format!
+3. `grokpedia.ts`: A TypeScript plugin that simulates an API lookup and outputs styled Markdown. It can be run using `bun run grokpedia.ts` or `npx tsx grokpedia.ts`.
 

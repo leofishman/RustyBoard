@@ -1,0 +1,7 @@
+{
+  "id": "ts-grokpedia",
+  "name": "Search Grokpedia",
+  "description": "Simulates a search on Grokpedia using a TypeScript plugin",
+  "command": "bun",
+  "args": ["run", "grokpedia.ts"]
+}

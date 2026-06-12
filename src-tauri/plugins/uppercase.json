@@ -1,0 +1,7 @@
+{
+  "id": "uppercase",
+  "name": "Uppercase Converter",
+  "description": "Converts text to uppercase",
+  "command": "tr",
+  "args": ["a-z", "A-Z"]
+}

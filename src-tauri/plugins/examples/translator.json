@@ -1,0 +1,7 @@
+{
+  "id": "python-translator-en",
+  "name": "Translate to English",
+  "description": "Translates the clipboard text to English using Python",
+  "command": "python3",
+  "args": ["translator.py"]
+}
