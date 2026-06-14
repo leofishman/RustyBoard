@@ -58,6 +58,21 @@ pub struct PluginDefinition {
     pub max_chars: Option<usize>,
     #[serde(default)]
     pub max_words: Option<usize>,
+    #[serde(default)]
+    pub applies_to: Option<Vec<String>>,
+}
+
+/// Stable lowercase id for a detected content type, used to match a plugin's
+/// `applies_to` list against the type of the current clipboard item.
+fn detected_type_id(dt: DetectedType) -> &'static str {
+    match dt {
+        DetectedType::Text => "text",
+        DetectedType::Svg => "svg",
+        DetectedType::Url => "url",
+        DetectedType::Json => "json",
+        DetectedType::Mermaid => "mermaid",
+        DetectedType::Markdown => "markdown",
+    }
 }
 
 impl PluginDefinition {
@@ -74,6 +89,15 @@ impl PluginDefinition {
             }
         }
         true
+    }
+
+    /// Whether this plugin applies to the given detected content type.
+    /// An unset `applies_to` means it applies to any text item.
+    fn accepts_type(&self, type_id: &str) -> bool {
+        match &self.applies_to {
+            None => true,
+            Some(types) => types.iter().any(|t| t.eq_ignore_ascii_case(type_id)),
+        }
     }
 }
 
@@ -215,9 +239,14 @@ fn ClipboardCard(
     let ct_footer = content_type.clone();
     let ct_plugin = content_type.clone();
 
-    // Text size of this item, used to decide which plugins are applicable.
+    // Text size and detected type of this item, used to decide which plugins apply.
     let plugin_char_count = display_content.chars().count();
     let plugin_word_count = display_content.split_whitespace().count();
+    let plugin_type_id = if content_type == "text" {
+        detected_type_id(detected_type)
+    } else {
+        "image"
+    };
 
     view! {
         <div class=move || {
@@ -406,7 +435,7 @@ fn ClipboardCard(
                         move || {
                             let applicable: Vec<PluginDefinition> = plugins.get()
                                 .into_iter()
-                                .filter(|p| p.accepts(plugin_char_count, plugin_word_count))
+                                .filter(|p| p.accepts(plugin_char_count, plugin_word_count) && p.accepts_type(plugin_type_id))
                                 .collect();
                             if ct_plugin_clone == "text" && !applicable.is_empty() {
                                 let on_run = on_run.clone();
@@ -436,7 +465,7 @@ fn ClipboardCard(
                                                     // would otherwise be parsed as tags by the macro.
                                                     let each_plugins = move || -> Vec<PluginDefinition> {
                                                         plugins.get().into_iter()
-                                                            .filter(|p| p.accepts(plugin_char_count, plugin_word_count))
+                                                            .filter(|p| p.accepts(plugin_char_count, plugin_word_count) && p.accepts_type(plugin_type_id))
                                                             .collect()
                                                     };
                                                     view! {

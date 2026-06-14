@@ -26,6 +26,11 @@ pub struct PluginDefinition {
     pub max_chars: Option<usize>,
     #[serde(default)]
     pub max_words: Option<usize>,
+    /// Optional list of detected content types this plugin applies to
+    /// (e.g. "text", "url", "json", "svg", "mermaid", "markdown"). When
+    /// omitted, the plugin is offered for any text item.
+    #[serde(default)]
+    pub applies_to: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -57,6 +62,7 @@ pub fn init_plugins_dir(app: &AppHandle) -> Result<(), String> {
             args: vec!["a-z".to_string(), "A-Z".to_string()],
             max_chars: None,
             max_words: None,
+            applies_to: None,
         };
         let example_path = dir.join("uppercase.json");
         let content = serde_json::to_string_pretty(&example).map_err(|e| e.to_string())?;

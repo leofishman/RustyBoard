@@ -103,7 +103,7 @@ When a plugin is invoked, RustyBoard takes the *raw text content* of the clipboa
 
 #### Input constraints (optional)
 
-A plugin can declare how much text it can sensibly handle, and RustyBoard will only offer it for clipboard items that fit. This keeps, for example, a single-word dictionary lookup or a short search from showing up when you've copied an entire document:
+A plugin can declare what kind of input it can sensibly handle, and RustyBoard will only offer it for clipboard items that match. This keeps, for example, a single-word dictionary lookup or a short search from showing up when you've copied an entire document, and lets a JSON formatter appear only for JSON:
 
 ```json
 {
@@ -116,7 +116,23 @@ A plugin can declare how much text it can sensibly handle, and RustyBoard will o
 }
 ```
 
-Both fields are optional; omit them and the plugin is offered for any text item.
+| Field | Meaning |
+|-------|---------|
+| `max_chars` | Hide the plugin when the item has more characters than this. |
+| `max_words` | Hide the plugin when the item has more whitespace-separated words than this. |
+| `applies_to` | List of detected content types the plugin applies to. Valid values: `text`, `url`, `json`, `svg`, `mermaid`, `markdown`. |
+
+All three fields are optional; omit them and the plugin is offered for any text item. Plugins currently operate on text only — image support is planned but not yet wired into the execution path.
+
+```json
+{
+  "id": "prettify-json",
+  "name": "Prettify JSON",
+  "command": "python3",
+  "args": ["-m", "json.tool"],
+  "applies_to": ["json"]
+}
+```
 
 ### Example: Fabric AI Integration
 
@@ -147,4 +163,5 @@ We have included some fully commented, **working** examples inside the `src-taur
 1. `translator.py`: A Python script (standard library only) that translates the clipboard content via Google's public `gtx` endpoint, auto-detecting the source language. Target language defaults to English and can be overridden, e.g. `"args": ["translator.py", "es"]`.
 2. `dictionary.sh`: A Bash script that takes a single word and fetches its definition from the free Dictionary API, formatting it as Markdown using `jq` or `python3` (whichever is available).
 3. `grokpedia.ts`: A TypeScript plugin that runs a **real search against [Grokipedia](https://grokipedia.com)** and returns the top results as Markdown with links. Run it with `bun run grokpedia.ts` (or `npx tsx grokpedia.ts` on Node.js ≥ 18).
+4. `prettify-json.json`: A script-less plugin (just a config) that pretty-prints copied JSON via `python3 -m json.tool`. It uses `applies_to: ["json"]`, so it only appears for JSON items.
 
