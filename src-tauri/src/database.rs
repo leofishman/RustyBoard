@@ -4,11 +4,24 @@ use crate::ClipboardItem;
 use crate::security::Sensitivity;
 use crate::config::PersistLevel;
 
+/// Opens a SQLite connection with a busy-timeout, so concurrent writers wait for
+/// a lock (up to 5s) instead of failing immediately with SQLITE_BUSY — which,
+/// combined with the swallowed `let _ =` errors at call sites, could previously
+/// drop writes silently.
+fn open_conn(db_path: &Path) -> Result<Connection, String> {
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(5000));
+    Ok(conn)
+}
+
 pub fn init_db(db_path: &Path) -> Result<(), String> {
     if let Some(parent) = db_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = open_conn(db_path)?;
+    // Write-Ahead Logging lets the clipboard monitor save while the UI deletes
+    // items or cleanup runs, instead of serializing every access.
+    let _ = conn.pragma_update(None, "journal_mode", "WAL");
     conn.execute(
         "CREATE TABLE IF NOT EXISTS history (
             id TEXT PRIMARY KEY,
@@ -41,7 +54,7 @@ pub fn save_item(db_path: &Path, item: &ClipboardItem, level: PersistLevel) -> R
         return Ok(());
     }
 
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = open_conn(db_path)?;
     conn.execute(
         "INSERT OR REPLACE INTO history (id, raw_content, display_content, content_type, sensitivity, timestamp, thumbnail)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -59,7 +72,7 @@ pub fn save_item(db_path: &Path, item: &ClipboardItem, level: PersistLevel) -> R
 }
 
 pub fn load_history(db_path: &Path) -> Result<Vec<ClipboardItem>, String> {
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = open_conn(db_path)?;
     let mut stmt = conn.prepare(
         "SELECT id, raw_content, display_content, content_type, sensitivity, timestamp, thumbnail
          FROM history
@@ -97,7 +110,7 @@ pub fn load_history(db_path: &Path) -> Result<Vec<ClipboardItem>, String> {
 }
 
 pub fn run_cleanup(db_path: &Path, level: PersistLevel) -> Result<(), String> {
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = open_conn(db_path)?;
 
     // The Credential 2h TTL applies in every mode except `All` (Unrestricted),
     // which keeps everything forever. In `None` mode this also clears any
@@ -127,7 +140,7 @@ pub fn run_cleanup(db_path: &Path, level: PersistLevel) -> Result<(), String> {
 }
 
 pub fn delete_item(db_path: &Path, id: &str) -> Result<(), String> {
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = open_conn(db_path)?;
     conn.execute(
         "DELETE FROM history WHERE id = ?1",
         params![id],
@@ -136,7 +149,7 @@ pub fn delete_item(db_path: &Path, id: &str) -> Result<(), String> {
 }
 
 pub fn clear_all(db_path: &Path) -> Result<(), String> {
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = open_conn(db_path)?;
     conn.execute(
         "DELETE FROM history",
         [],
