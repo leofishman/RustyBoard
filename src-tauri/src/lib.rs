@@ -4,6 +4,7 @@ mod database;
 mod plugins;
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -53,6 +54,10 @@ struct AppState {
     // Stores raw content of the last item written by the app itself
     // to prevent clipboard monitor feedback loops.
     last_written: Mutex<Option<String>>,
+    // True while a debounced tray-menu rebuild is already scheduled, so bursts
+    // of operations (e.g. deleting several items) coalesce into one rebuild
+    // instead of piling heavy work onto the GTK main thread.
+    tray_update_pending: AtomicBool,
 }
 
 #[tauri::command]
@@ -109,6 +114,26 @@ fn update_tray_menu(app: &AppHandle) -> Result<(), String> {
             eprintln!("Error updating tray menu on main thread: {}", e);
         }
     }).map_err(|e| e.to_string())
+}
+
+// Debounced tray rebuild. Rebuilding the tray menu (decoding image thumbnails,
+// calling `set_menu`) runs on the GTK main thread, which also drives the
+// WebView; doing it synchronously on every operation can freeze the UI and
+// starve IPC when several happen in quick succession. This coalesces a burst
+// into a single rebuild shortly after the activity settles.
+fn schedule_tray_update(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    // If a rebuild is already scheduled, let it cover this change too.
+    if state.tray_update_pending.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let state = app.state::<AppState>();
+        state.tray_update_pending.store(false, Ordering::SeqCst);
+        let _ = update_tray_menu(&app);
+    });
 }
 
 fn update_tray_menu_impl(app: &AppHandle) -> Result<(), String> {
@@ -242,10 +267,10 @@ async fn delete_clipboard_item(app: AppHandle, id: String) -> Result<(), String>
         let mut history = state.history.lock().map_err(|e| e.to_string())?;
         history.retain(|item| item.id != id);
     }
-    
-    // 2. Update tray menu (non-blocking for this thread since it dispatches to main loop internally)
-    let _ = update_tray_menu(&app);
-    
+
+    // 2. Update tray menu (debounced so rapid deletes don't freeze the main thread)
+    schedule_tray_update(&app);
+
     // 3. Spawn database removal asynchronously (non-blocking)
     let app_handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -265,10 +290,10 @@ async fn clear_all_history(app: AppHandle) -> Result<(), String> {
         let mut history = state.history.lock().map_err(|e| e.to_string())?;
         history.clear();
     }
-    
-    // 2. Update tray menu
-    let _ = update_tray_menu(&app);
-    
+
+    // 2. Update tray menu (debounced)
+    schedule_tray_update(&app);
+
     // 3. Spawn database clear asynchronously (non-blocking)
     let app_handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -609,6 +634,7 @@ impl ClipboardHandler for ClipboardMonitor {
                   db_path,
               history: Mutex::new(loaded_history),
                   last_written: Mutex::new(None),
+                  tray_update_pending: AtomicBool::new(false),
               };
               app.manage(app_state);
 

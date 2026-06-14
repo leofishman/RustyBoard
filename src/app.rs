@@ -208,7 +208,7 @@ fn ClipboardCard(
     let (copied_indicator, set_copied_indicator) = signal(false);
     let (view_raw, set_view_raw) = signal(false);
     let (show_plugins, set_show_plugins) = signal(false);
-    let (deleting, set_deleting) = signal(false);
+    let (deleting, _set_deleting) = signal(false);
 
     let id = item.id.clone();
     let id_mermaid = item.id.clone();
@@ -339,9 +339,9 @@ fn ClipboardCard(
                                 <button class="btn-delete-small" title="Delete from history" on:click={
                                     let on_delete = on_delete.clone();
                                     let delete_id = id.clone();
-                                    let set_deleting = set_deleting.clone();
                                     move |_| {
-                                        set_deleting.set(true);
+                                        // Deletion is optimistic, so the card unmounts instantly;
+                                        // no "deleting" spinner needed.
                                         on_delete.run(delete_id.clone());
                                     }
                                 }>
@@ -728,17 +728,18 @@ pub fn App() -> impl IntoView {
     let delete_item = Callback::new({
         let set_history = set_history.clone();
         move |id: String| {
-            let id = id.clone();
-            let set_history = set_history.clone();
-            spawn_local(async move {
-                if is_tauri() {
-                    let args = serde_wasm_bindgen::to_value(&CopyArgs { id: id.clone() }).unwrap();
-                    let _ = invoke("delete_clipboard_item", args).await;
-                }
-                set_history.update(|h| {
-                    h.retain(|item| item.id != id);
-                });
+            // Optimistic: drop the item from the UI list right away so deletion
+            // feels instant and never waits on the backend.
+            set_history.update(|h| {
+                h.retain(|item| item.id != id);
             });
+            // Fire the backend deletion in the background (memory + tray + async DB).
+            if is_tauri() {
+                spawn_local(async move {
+                    let args = serde_wasm_bindgen::to_value(&CopyArgs { id }).unwrap();
+                    let _ = invoke("delete_clipboard_item", args).await;
+                });
+            }
         }
     });
 
