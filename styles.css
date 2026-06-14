@@ -645,5 +645,20 @@ body {
   to { transform: scale(1); opacity: 1; }
 }
 
+.modal-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-top: 0.8rem;
+}
+
+.modal-checkbox-label input {
+  cursor: pointer;
+  accent-color: var(--accent-red);
+}
+
 
 

@@ -15,6 +15,12 @@ extern "C" {
 
     #[wasm_bindgen(js_name = renderMermaid)]
     fn render_mermaid(element_id: &str, code: &str);
+
+    #[wasm_bindgen(js_namespace = localStorage, js_name = getItem)]
+    fn get_storage_item(key: &str) -> Option<String>;
+
+    #[wasm_bindgen(js_namespace = localStorage, js_name = setItem)]
+    fn set_storage_item(key: &str, value: &str);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -112,12 +118,18 @@ fn ClipboardCard(
     let (view_raw, set_view_raw) = signal(false);
     let (show_plugins, set_show_plugins) = signal(false);
 
+    let (show_warning_modal, set_show_warning_modal) = signal(false);
+    let (pending_plugin_id, set_pending_plugin_id) = signal(None::<String>);
+    let (dont_show_again, set_dont_show_again) = signal(false);
+
     let id = item.id.clone();
     let id_mermaid = item.id.clone();
     let id_plugin = item.id.clone();
     let content_type = item.content_type.clone();
     let display_content = item.display_content.clone();
     let sensitivity = item.sensitivity;
+
+
 
     let detected_type = if content_type == "text" {
         classify_text(&display_content)
@@ -329,21 +341,37 @@ fn ClipboardCard(
                     </button>
 
                     {
-                        let id_clone = id_plugin.clone();
                         let ct_plugin_clone = ct_plugin.clone();
+                        let on_run = on_run_plugin.clone();
+                        let iid = id_plugin.clone();
+                        let set_pending = set_pending_plugin_id.clone();
+                        let set_warning = set_show_warning_modal.clone();
+                        let set_show = set_show_plugins.clone();
                         move || {
-                            let current_id = id_clone.clone();
                             if ct_plugin_clone == "text" && !plugins.get().is_empty() {
+                                let on_run = on_run.clone();
+                                let iid = iid.clone();
+                                let set_pending = set_pending.clone();
+                                let set_warning = set_warning.clone();
+                                let set_show = set_show.clone();
                                 view! {
                                     <div class="plugin-dropdown">
-                                        <button class="btn btn-tertiary" on:click=move |_| set_show_plugins.update(|s| *s = !*s)>
+                                        <button class="btn btn-tertiary" on:click=move |_| set_show.update(|s| *s = !*s)>
                                             "🔌 Plugins"
                                         </button>
                                         {
-                                            let cur_id_2 = current_id.clone();
+                                            let on_run = on_run.clone();
+                                            let iid = iid.clone();
+                                            let set_pending = set_pending.clone();
+                                            let set_warning = set_warning.clone();
+                                            let set_show = set_show.clone();
                                             move || {
-                                                let cid3 = cur_id_2.clone();
                                                 if show_plugins.get() {
+                                                    let on_run = on_run.clone();
+                                                    let iid = iid.clone();
+                                                    let set_pending = set_pending.clone();
+                                                    let set_warning = set_warning.clone();
+                                                    let set_show = set_show.clone();
                                                     view! {
                                                         <div class="plugin-menu">
                                                             <For
@@ -351,14 +379,28 @@ fn ClipboardCard(
                                                                 key=|p| p.id.clone()
                                                                 children=move |p| {
                                                                     let pid = p.id.clone();
-                                                                    let iid = cid3.clone();
                                                                     let name = p.name.clone();
                                                                     let desc = p.description.clone();
-                                                                    let on_run_plugin_clone = on_run_plugin.clone();
+                                                                    let on_run = on_run.clone();
+                                                                    let iid = iid.clone();
+                                                                    let set_pending = set_pending.clone();
+                                                                    let set_warning = set_warning.clone();
+                                                                    let set_show = set_show.clone();
                                                                     view! {
                                                                         <button class="plugin-item" title=desc on:click=move |_| {
-                                                                            set_show_plugins.set(false);
-                                                                            on_run_plugin_clone.dispatch((pid.clone(), iid.clone()));
+                                                                            set_show.set(false);
+                                                                            let pid_clone = pid.clone();
+                                                                            let iid_clone = iid.clone();
+                                                                            let already_accepted = get_storage_item("rustyboard_plugin_warning_accepted")
+                                                                                .map(|val| val == "true")
+                                                                                .unwrap_or(false);
+
+                                                                            if already_accepted {
+                                                                                on_run.dispatch((pid_clone, iid_clone));
+                                                                            } else {
+                                                                                set_pending.set(Some(pid_clone));
+                                                                                set_warning.set(true);
+                                                                            }
                                                                         }>
                                                                             {name}
                                                                         </button>
@@ -381,6 +423,70 @@ fn ClipboardCard(
                     }
                 </div>
             </div>
+
+            {
+                let on_run = on_run_plugin.clone();
+                let iid = id_plugin.clone();
+                let set_pending = set_pending_plugin_id.clone();
+                let set_warning = set_show_warning_modal.clone();
+                let dont_show = dont_show_again.clone();
+                move || {
+                    if show_warning_modal.get() {
+                        let on_run = on_run.clone();
+                        let iid = iid.clone();
+                        let set_pending = set_pending.clone();
+                        let set_warning = set_warning.clone();
+                        let dont_show = dont_show.clone();
+                        view! {
+                            <div class="modal-overlay">
+                                <div class="modal-card">
+                                    <div class="modal-header">
+                                        <span class="warning-icon">"⚠️"</span>
+                                        <h2>"Security Warning: External Plugin"</h2>
+                                    </div>
+                                    <div class="modal-body">
+                                        <p>"You are about to execute an external command/script on your system."</p>
+                                        <div class="modal-alert">
+                                            "Plugins run with your user privileges and can access files, network resources, and execute system commands. "
+                                            "Ensure that you trust the plugin configuration and script before executing it."
+                                        </div>
+                                        <label class="modal-checkbox-label">
+                                            <input
+                                                type="checkbox"
+                                                prop:checked=dont_show
+                                                on:change=move |ev| set_dont_show_again.set(event_target_checked(&ev))
+                                            />
+                                            " Do not show this warning again"
+                                        </label>
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button class="btn btn-secondary" on:click=move |_| {
+                                            set_warning.set(false);
+                                            set_pending.set(None);
+                                        }>
+                                            "Cancel"
+                                        </button>
+                                        <button class="btn btn-danger" on:click=move |_| {
+                                            if let Some(pid) = pending_plugin_id.get() {
+                                                if dont_show.get() {
+                                                    set_storage_item("rustyboard_plugin_warning_accepted", "true");
+                                                }
+                                                on_run.dispatch((pid, iid.clone()));
+                                            }
+                                            set_warning.set(false);
+                                            set_pending.set(None);
+                                        }>
+                                            "Run Plugin"
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        }.into_any()
+                    } else {
+                        ().into_any()
+                    }
+                }
+            }
         </div>
     }
 }
