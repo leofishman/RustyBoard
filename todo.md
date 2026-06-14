@@ -40,8 +40,15 @@ Este archivo contiene la planificación paso a paso para construir el gestor de 
 - [ ] **Fix marmaid render**
 - [ ] **Soporte Multi-Idioma (i18n)**: Investigar e implementar soporte multi-idioma para la interfaz (traducción de advertencias, menús y botones).
 - [ ] **Mitigación de Malware del SO (Auto-Type)**: Implementar simulación de pulsaciones de teclado (virtual typing) para pegar texto directamente en la ventana activa sin escribirlo en el portapapeles.
+- [ ] **Cambiar titulo o nombre de app**: Ahora aparece Tauri-app en el tray y en el panel.
 
 ## 🧹 Fase 6: Depuración y Validación Final (Próxima Sesión)
 - [ ] **Validar y Refinar Borrado e Historial ("Clear All")**: Resolver los problemas de bloqueo de hilos/interfaz (thread locking) al reconstruir el menú del System Tray durante las eliminaciones, y refinar la visualización de los botones de borrado.
 
-
+## Fase 7: 
+- [ ] **Abstraccion de base de datos**: Soporte de diferentes backends (PostgreSQL, MySQL, mongo, supabase, etc.).
+- [ ] **Sync History (One way and Two way)**: Con diferentes dispotivos. Consumir directo de la db (sqlite o la que sea). Mecanismo de autenticacion.
+- [ ] **Soportar listas**: Guardar historial como listas para poder gestionar elementos de forma agrupada. No solo una lista de historial y poder compartirlas.
+- [ ] **Emular pintado y pegado**: Con boton del medio estilo Linux sin dejar rastro en clipboard.
+- [ ] **Heartbeat**: 60 segundos me parece muy frecuente, podria ser cada 15 minutos o cada vez que el usuario haga uso del portapapeles. 
+- [ ] **Soporte de atajos complejos**: Actalmente el atajo debe ser Ctrl+Shift+Tecla, me gustaria que se pudieran configurar atajos mas complejos como Super+v, con funcionalidades especificas, por ejemplo la de emular pintado y pegado estilo Linux sin dejar rastro en clipboard, o copiar elementos sensibles mas alla del estado en que funcione la app, un copiado sensible no persiste y se trata como secret aunque el sistema no logre clasificarlo como tal.

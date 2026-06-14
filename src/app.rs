@@ -104,10 +104,12 @@ impl PluginDefinition {
     }
 
     /// Whether this plugin applies to the given detected content type.
-    /// An unset `applies_to` means it applies to any text item.
     fn accepts_type(&self, type_id: &str) -> bool {
         match &self.applies_to {
-            None => true,
+            // Default: apply to prose-like text (text, markdown, url) but NOT to
+            // specialized structured/visual types, where a generic text transform
+            // rarely makes sense. Plugins for those must opt in via `applies_to`.
+            None => !matches!(type_id, "json" | "svg" | "mermaid"),
             Some(types) => types.iter().any(|t| t.eq_ignore_ascii_case(type_id)),
         }
     }
@@ -183,6 +185,26 @@ fn format_timestamp(timestamp: u64) -> String {
     }
 }
 
+/// Extracts the bare Mermaid source from a clipboard item, stripping a
+/// ```` ```mermaid ```` … ```` ``` ```` fenced block if present (mermaid.render
+/// chokes on the fences). Bare diagrams are returned unchanged.
+fn extract_mermaid_code(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let body = trimmed
+        .strip_prefix("```mermaid")
+        .or_else(|| trimmed.strip_prefix("```"));
+    match body {
+        Some(rest) => {
+            let rest = rest.trim_start_matches(['\r', '\n']);
+            match rest.rfind("```") {
+                Some(end) => rest[..end].trim().to_string(),
+                None => rest.trim().to_string(),
+            }
+        }
+        None => trimmed.to_string(),
+    }
+}
+
 fn render_markdown(md: &str) -> String {
     // Escape raw HTML inside MD first
     let escaped = md.replace('&', "&amp;")
@@ -224,6 +246,22 @@ fn ClipboardCard(
     } else {
         DetectedType::Text
     };
+
+    // Mermaid is initialized with startOnLoad:false, so the diagram div created in
+    // the view is never drawn on its own. Trigger the render explicitly once the
+    // node is mounted, and re-run it whenever the raw-view toggle flips back.
+    if detected_type == DetectedType::Mermaid {
+        let container_id = format!("mermaid-{}", item.id);
+        let code = extract_mermaid_code(&display_content);
+        Effect::new(move |_| {
+            if !view_raw.get() {
+                let container_id = container_id.clone();
+                let code = code.clone();
+                // Defer so the target element exists before mermaid renders into it.
+                set_timeout(move || render_mermaid(&container_id, &code), 0);
+            }
+        });
+    }
 
     let is_masked = move || {
         !revealed.get() && (sensitivity == Sensitivity::Secret || sensitivity == Sensitivity::Credential)
@@ -877,48 +915,43 @@ pub fn App() -> impl IntoView {
             </header>
 
             <div class="history-list">
-                {move || {
-                    let items = history.get();
-                    if items.is_empty() {
-                        view! {
-                            <div class="empty-state">
-                                <span class="empty-icon">"📋"</span>
-                                <p>"Clipboard history is empty. Copy some text or images!"</p>
-                            </div>
-                        }.into_any()
-                    } else {
-                        view! {
-                            <For
-                                each=move || history.get()
-                                key=|item| item.id.clone()
-                                children={
-                                    let copy_item = copy_item.clone();
-                                    let run_plugin = run_plugin.clone();
-                                    let set_pending_plugin_run = set_pending_plugin_run.clone();
-                                    let delete_item = delete_item.clone();
-                                    let history = history.clone();
-                                    move |item| {
-                                        let item_id = item.id.clone();
-                                        let is_active = Signal::derive(move || {
-                                            history.get().first().map(|x| x.id.clone()) == Some(item_id.clone())
-                                        });
-                                        view! {
-                                            <ClipboardCard
-                                                item=item.clone()
-                                                on_copy=copy_item.clone()
-                                                plugins=plugins.into()
-                                                on_run_plugin=run_plugin.clone()
-                                                on_trigger_warning=set_pending_plugin_run.clone()
-                                                is_active=is_active
-                                                on_delete=delete_item.clone()
-                                            />
-                                        }
-                                    }
-                                }
-                            />
-                        }.into_any()
+                // Empty-state and list are kept as siblings so the <For> is created
+                // exactly once and reacts to `history` internally. Wrapping the <For>
+                // in a closure that also reads `history` would recreate it on every
+                // change, breaking reactivity (stale handlers, list not updating).
+                <Show when=move || history.get().is_empty()>
+                    <div class="empty-state">
+                        <span class="empty-icon">"📋"</span>
+                        <p>"Clipboard history is empty. Copy some text or images!"</p>
+                    </div>
+                </Show>
+                <For
+                    each=move || history.get()
+                    key=|item| item.id.clone()
+                    children={
+                        let copy_item = copy_item.clone();
+                        let run_plugin = run_plugin.clone();
+                        let set_pending_plugin_run = set_pending_plugin_run.clone();
+                        let delete_item = delete_item.clone();
+                        move |item| {
+                            let item_id = item.id.clone();
+                            let is_active = Signal::derive(move || {
+                                history.get().first().map(|x| x.id.clone()) == Some(item_id.clone())
+                            });
+                            view! {
+                                <ClipboardCard
+                                    item=item.clone()
+                                    on_copy=copy_item.clone()
+                                    plugins=plugins.into()
+                                    on_run_plugin=run_plugin.clone()
+                                    on_trigger_warning=set_pending_plugin_run.clone()
+                                    is_active=is_active
+                                    on_delete=delete_item.clone()
+                                />
+                            }
+                        }
                     }
-                }}
+                />
             </div>
 
             {move || {
