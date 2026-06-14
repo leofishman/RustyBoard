@@ -41,4 +41,7 @@ Este archivo contiene la planificación paso a paso para construir el gestor de 
 - [ ] **Soporte Multi-Idioma (i18n)**: Investigar e implementar soporte multi-idioma para la interfaz (traducción de advertencias, menús y botones).
 - [ ] **Mitigación de Malware del SO (Auto-Type)**: Implementar simulación de pulsaciones de teclado (virtual typing) para pegar texto directamente en la ventana activa sin escribirlo en el portapapeles.
 
+## 🧹 Fase 6: Depuración y Validación Final (Próxima Sesión)
+- [ ] **Validar y Refinar "Clear All"**: Probar a fondo la funcionalidad de borrado total de historial en todas las plataformas y corregir posibles inconsistencias visuales de botones.
+
 

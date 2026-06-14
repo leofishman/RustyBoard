@@ -28,7 +28,7 @@ extern "C" {
 }
 
 fn is_tauri() -> bool {
-    let window = match web_sys::window() {
+    let window = match leptos::web_sys::window() {
         Some(w) => w,
         None => return false,
     };

@@ -162,37 +162,44 @@ mod tests {
 
         assert!(init_db(&db_path).is_ok());
 
-        // 1. None level - only None sensitivity persists
+        // 1. None level (Paranoid) - only None sensitivity persists
         let item_none = get_dummy_item("id_none", Sensitivity::None, 1000);
         let item_personal = get_dummy_item("id_personal", Sensitivity::Personal, 1001);
-        let item_secret = get_dummy_item("id_secret", Sensitivity::Secret, 1002);
+        let item_cred = get_dummy_item("id_cred", Sensitivity::Credential, 1002);
+        let item_secret = get_dummy_item("id_secret", Sensitivity::Secret, 1003);
         
         assert!(save_item(&db_path, &item_none, PersistLevel::None).is_ok());
         assert!(save_item(&db_path, &item_personal, PersistLevel::None).is_ok());
+        assert!(save_item(&db_path, &item_cred, PersistLevel::None).is_ok());
         assert!(save_item(&db_path, &item_secret, PersistLevel::None).is_ok());
         
         let history = load_history(&db_path).unwrap();
+        // Only id_none should have been saved
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].id, "id_none");
 
-        // 2. Sensitive level - None and Personal persist, Secret and Credential do not
-        let item_cred = get_dummy_item("id_cred", Sensitivity::Credential, 1003);
+        // 2. Sensitive level (Balanced) - None and Personal persist, Credential and Secret do not
         assert!(save_item(&db_path, &item_personal, PersistLevel::Sensitive).is_ok());
         assert!(save_item(&db_path, &item_cred, PersistLevel::Sensitive).is_ok());
         assert!(save_item(&db_path, &item_secret, PersistLevel::Sensitive).is_ok());
 
         let history = load_history(&db_path).unwrap();
-        // None (from test 1), Personal
+        // None (from test 1) and Personal should have been saved
         assert_eq!(history.len(), 2);
-        assert!(!history.iter().any(|x| x.id == "id_secret" || x.id == "id_cred"));
+        assert!(history.iter().any(|x| x.id == "id_none"));
+        assert!(history.iter().any(|x| x.id == "id_personal"));
+        assert!(!history.iter().any(|x| x.id == "id_cred"));
+        assert!(!history.iter().any(|x| x.id == "id_secret"));
 
-        // 3. All level - everything persists including secrets
+        // 3. All level (Unrestricted) - everything persists including secrets and credentials
         assert!(save_item(&db_path, &item_cred, PersistLevel::All).is_ok());
         assert!(save_item(&db_path, &item_secret, PersistLevel::All).is_ok());
         let history = load_history(&db_path).unwrap();
         assert_eq!(history.len(), 4);
-        assert!(history.iter().any(|x| x.id == "id_secret"));
+        assert!(history.iter().any(|x| x.id == "id_none"));
+        assert!(history.iter().any(|x| x.id == "id_personal"));
         assert!(history.iter().any(|x| x.id == "id_cred"));
+        assert!(history.iter().any(|x| x.id == "id_secret"));
 
         let _ = std::fs::remove_file(&db_path);
     }
