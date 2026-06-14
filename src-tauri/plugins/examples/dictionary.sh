@@ -29,24 +29,36 @@ else
         if echo "$RESPONSE" | grep -q '"title":"No Definitions Found"'; then
             echo "No definition found for '$INPUT_WORD'."
         else
-            # 5. Extract and format the result
-            # Using 'jq' (a command-line JSON processor) to parse the definition.
-            # If 'jq' is not installed, we fallback to just printing the raw JSON.
+            # 5. Extract and format the result as Markdown.
+            # We prefer 'jq' (a command-line JSON processor) if available, and
+            # otherwise fall back to 'python3' so this works out of the box
+            # without installing anything extra.
             if command -v jq &> /dev/null; then
-                # Extract the first definition and format it using Markdown!
-                # Because RustyBoard supports Markdown out of the box, we can return MD format.
                 DEFINITION=$(echo "$RESPONSE" | jq -r '.[0].meanings[0].definitions[0].definition')
                 PART_OF_SPEECH=$(echo "$RESPONSE" | jq -r '.[0].meanings[0].partOfSpeech')
 
-                # 6. Output to standard output
-                # RustyBoard will capture this markdown string and render it beautifully in the UI.
+                # 6. Output to standard output as Markdown for RustyBoard to render.
                 echo "### Dictionary Definition"
                 echo "**Word:** \`${INPUT_WORD}\`"
                 echo "**Type:** *${PART_OF_SPEECH}*"
                 echo "**Definition:** ${DEFINITION}"
+            elif command -v python3 &> /dev/null; then
+                echo "$RESPONSE" | python3 -c '
+import sys, json
+word = sys.argv[1]
+data = json.load(sys.stdin)
+entry = data[0]
+meaning = entry["meanings"][0]
+definition = meaning["definitions"][0]["definition"]
+pos = meaning["partOfSpeech"]
+print("### Dictionary Definition")
+print(f"**Word:** `{word}`")
+print(f"**Type:** *{pos}*")
+print(f"**Definition:** {definition}")
+' "$INPUT_WORD"
             else
-                # Fallback if jq is not installed
-                echo "Please install 'jq' (sudo apt install jq) to parse the JSON nicely."
+                # Last resort: neither jq nor python3 available.
+                echo "Install 'jq' or 'python3' to format definitions. Raw response:"
                 echo ""
                 echo "$RESPONSE"
             fi

@@ -5,8 +5,12 @@ use tauri::AppHandle;
 use tauri::path::BaseDirectory;
 use tauri::Manager;
 use std::process::{Command, Stdio};
-use std::io::Write;
+use std::io::{Read, Write};
+use std::time::{Duration, Instant};
 use crate::security::{sanitize_text, sanitize_svg, classify_sensitivity, Sensitivity};
+
+/// Maximum time a plugin process is allowed to run before it is killed.
+const PLUGIN_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PluginDefinition {
@@ -85,7 +89,7 @@ pub fn execute_plugin(app: &AppHandle, plugin_id: &str, input_text: &str) -> Res
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Failed to spawn plugin command: {}", e))?;
+        .map_err(|e| format!("Failed to spawn plugin command '{}': {}", plugin.command, e))?;
 
     // Drop stdin reference to avoid deadlock if child reads until EOF
     if let Some(mut stdin) = child.stdin.take() {
@@ -96,10 +100,50 @@ pub fn execute_plugin(app: &AppHandle, plugin_id: &str, input_text: &str) -> Res
         });
     }
 
-    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    // Drain stdout/stderr in dedicated threads so the child's pipe buffers never
+    // fill up and deadlock while we are polling for the timeout below.
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+    let stdout_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(ref mut pipe) = stdout_pipe {
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let stderr_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(ref mut pipe) = stderr_pipe {
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    });
 
-    if output.status.success() {
-        let stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
+    // Poll for completion, enforcing the timeout.
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait().map_err(|e| e.to_string())? {
+            Some(status) => break status,
+            None => {
+                if start.elapsed() >= PLUGIN_TIMEOUT {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "Plugin '{}' timed out after {} seconds and was terminated.",
+                        plugin.name,
+                        PLUGIN_TIMEOUT.as_secs()
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    };
+
+    let stdout_bytes = stdout_handle.join().unwrap_or_default();
+    let stderr_bytes = stderr_handle.join().unwrap_or_default();
+
+    if status.success() {
+        let stdout_str = String::from_utf8_lossy(&stdout_bytes).to_string();
 
         // Security: Sanitize output from plugin
         let trimmed = stdout_str.trim();
@@ -120,13 +164,21 @@ pub fn execute_plugin(app: &AppHandle, plugin_id: &str, input_text: &str) -> Res
             error: None,
         })
     } else {
-        let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
+        let stderr_str = String::from_utf8_lossy(&stderr_bytes).to_string();
+        let message = if stderr_str.trim().is_empty() {
+            format!(
+                "Plugin '{}' exited with {} and produced no error output.",
+                plugin.name, status
+            )
+        } else {
+            stderr_str
+        };
         Ok(PluginResponse {
             success: false,
             result_raw_content: "".to_string(),
             result_display_content: "".to_string(),
             sensitivity: Sensitivity::None,
-            error: Some(stderr_str),
+            error: Some(message),
         })
     }
 }

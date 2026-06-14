@@ -38,4 +38,6 @@ Este archivo contiene la planificación paso a paso para construir el gestor de 
 - [x] **Sincronización al Portapapeles**: Copiar el resultado de la salida del plugin de forma automática al portapapeles del sistema operativo (`copy_item_by_id`).
 - [x] **Cartel de Advertencia (Warning Modal)**: Mostrar una advertencia de seguridad en inglés antes de ejecutar un plugin por primera vez, permitiendo recordar la decisión.
 - [ ] **Soporte Multi-Idioma (i18n)**: Investigar e implementar soporte multi-idioma para la interfaz (traducción de advertencias, menús y botones).
+- [ ] **Mitigación de Malware del SO (Auto-Type)**: Implementar simulación de pulsaciones de teclado (virtual typing) para pegar texto directamente en la ventana activa sin escribirlo en el portapapeles.
+
 

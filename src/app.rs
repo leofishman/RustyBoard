@@ -10,6 +10,10 @@ extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
     async fn invoke(cmd: &str, args: JsValue) -> JsValue;
 
+    // Same as `invoke`, but surfaces a rejected command (Err) as `Err(JsValue)`.
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"], js_name = invoke, catch)]
+    async fn invoke_catch(cmd: &str, args: JsValue) -> Result<JsValue, JsValue>;
+
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"])]
     async fn listen(event: &str, handler: &js_sys::Function) -> JsValue;
 
@@ -57,6 +61,33 @@ pub struct PluginDefinition {
 struct RunPluginArgs {
     plugin_id: String,
     item_id: String,
+}
+
+const ACCEPTED_PLUGINS_KEY: &str = "rustyboard_accepted_plugins";
+
+/// Whether the user has previously trusted this specific plugin (by id).
+/// Trust is intentionally per-plugin, so accepting one plugin never silences
+/// the warning for a different (possibly malicious) plugin added later.
+fn is_plugin_accepted(plugin_id: &str) -> bool {
+    get_storage_item(ACCEPTED_PLUGINS_KEY)
+        .map(|val| val.split('\n').any(|id| id == plugin_id))
+        .unwrap_or(false)
+}
+
+/// Persist trust for a single plugin id.
+fn accept_plugin(plugin_id: &str) {
+    let mut accepted: Vec<String> = get_storage_item(ACCEPTED_PLUGINS_KEY)
+        .map(|val| {
+            val.split('\n')
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+    if !accepted.iter().any(|id| id == plugin_id) {
+        accepted.push(plugin_id.to_string());
+        set_storage_item(ACCEPTED_PLUGINS_KEY, &accepted.join("\n"));
+    }
 }
 
 fn set_timeout<F: FnOnce() + 'static>(f: F, ms: i32) {
@@ -391,9 +422,7 @@ fn ClipboardCard(
                                                                             set_show.set(false);
                                                                             let pid_clone = pid.clone();
                                                                             let iid_clone = iid.clone();
-                                                                            let already_accepted = get_storage_item("rustyboard_plugin_warning_accepted")
-                                                                                .map(|val| val == "true")
-                                                                                .unwrap_or(false);
+                                                                            let already_accepted = is_plugin_accepted(&pid_clone);
 
                                                                             if already_accepted {
                                                                                 on_run.dispatch((pid_clone, iid_clone));
@@ -456,25 +485,27 @@ fn ClipboardCard(
                                                 prop:checked=dont_show
                                                 on:change=move |ev| set_dont_show_again.set(event_target_checked(&ev))
                                             />
-                                            " Do not show this warning again"
+                                            " Trust this plugin and don't warn me again for it"
                                         </label>
                                     </div>
                                     <div class="modal-footer">
                                         <button class="btn btn-secondary" on:click=move |_| {
                                             set_warning.set(false);
                                             set_pending.set(None);
+                                            set_dont_show_again.set(false);
                                         }>
                                             "Cancel"
                                         </button>
                                         <button class="btn btn-danger" on:click=move |_| {
                                             if let Some(pid) = pending_plugin_id.get() {
                                                 if dont_show.get() {
-                                                    set_storage_item("rustyboard_plugin_warning_accepted", "true");
+                                                    accept_plugin(&pid);
                                                 }
                                                 on_run.dispatch((pid, iid.clone()));
                                             }
                                             set_warning.set(false);
                                             set_pending.set(None);
+                                            set_dont_show_again.set(false);
                                         }>
                                             "Run Plugin"
                                         </button>
@@ -502,6 +533,7 @@ pub fn App() -> impl IntoView {
     let (persist_level, set_persist_level) = signal("None".to_string());
     let (show_confirm_modal, set_show_confirm_modal) = signal(false);
     let (plugins, set_plugins) = signal(Vec::<PluginDefinition>::new());
+    let (plugin_error, set_plugin_error) = signal(None::<String>);
 
     // 1. Initial Load of History and Plugins
     Effect::new(move |_| {
@@ -581,12 +613,16 @@ pub fn App() -> impl IntoView {
     });
 
     // 4b. Action to Run Plugin
-    let run_plugin = Action::new_local(|args: &(String, String)| {
+    let run_plugin = Action::new_local(move |args: &(String, String)| {
         let plugin_id = args.0.clone();
         let item_id = args.1.clone();
         async move {
+            set_plugin_error.set(None);
             let invoke_args = serde_wasm_bindgen::to_value(&RunPluginArgs { plugin_id, item_id }).unwrap();
-            let _ = invoke("run_plugin", invoke_args).await;
+            if let Err(e) = invoke_catch("run_plugin", invoke_args).await {
+                let msg = e.as_string().unwrap_or_else(|| "Plugin execution failed.".to_string());
+                set_plugin_error.set(Some(msg));
+            }
         }
     });
 
@@ -668,6 +704,25 @@ pub fn App() -> impl IntoView {
                     }
                 }}
             </div>
+
+            {move || {
+                if let Some(err) = plugin_error.get() {
+                    view! {
+                        <div class="error-toast">
+                            <span class="error-toast-icon">"⛔"</span>
+                            <span class="error-toast-msg">{err}</span>
+                            <button
+                                class="error-toast-close"
+                                on:click=move |_| set_plugin_error.set(None)
+                            >
+                                "✕"
+                            </button>
+                        </div>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }
+            }}
 
             {move || {
                 if show_confirm_modal.get() {

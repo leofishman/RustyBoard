@@ -85,6 +85,8 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 - [x] **Phase 10: External Plugin System** (Extensible CLI-based plugin system to run external tools on clipboard contents like Fabric AI).
 - [x] **Phase 11: Safety Modal & Stdin/Stdout Sync** (One-time safety warning dialog with "do not show again" preference, and writing plugin outputs directly to the system clipboard).
 - [ ] **Phase 12: Multi-Language Support (i18n)** (Zero-dependency lightweight localization for English, Spanish, and other languages).
+- [ ] **Phase 13: OS Malware Mitigation (Auto-Type)** (Keystroke simulation / virtual typing to enter clips directly into active input fields without using the system clipboard).
+
 
 ---
 
@@ -92,6 +94,8 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 
 RustyBoard supports an extensible plugin system that allows the community to build custom commands using external CLI tools.
 Plugins are defined using simple `.json` files placed in the `plugins/` directory within your app's configuration folder (e.g. `~/.config/rustyboard/plugins/`).
+
+RustyBoard ships **with no plugins enabled by default** — we keep the app lightweight and let you opt into extending it. On first launch only a single `uppercase.json` sample is written to your config folder; everything under `src-tauri/plugins/` in this repository is **reference documentation**, not installed automatically. To use one, copy its `.json` (and any script it references) into your config `plugins/` directory yourself.
 
 ### How It Works
 
@@ -115,13 +119,15 @@ Now, any text you copy can be summarized with a single click from the UI! The co
 
 ### 🔒 Safety & Clipboard Synchronization
 
-- **Safety Warning Modal**: To protect against accidental execution of unvetted local binaries, RustyBoard shows a warning modal in English the first time you execute a plugin. You can suppress future warnings permanently by checking the "Do not show this warning again" checkbox, which persists your choice in the browser's local storage.
+- **Safety Warning Modal**: To protect against accidental execution of unvetted local binaries, RustyBoard shows a warning modal in English the first time you execute a given plugin. Trust is granted **per plugin** — checking "Trust this plugin and don't warn me again for it" only silences the warning for that specific plugin, so a different (or newly added) plugin will still prompt you. Choices persist in local storage.
+- **Execution Timeout**: Each plugin process is given a hard 30-second limit; if it hangs (e.g. waiting on the network) it is terminated and the error is surfaced in the UI.
+- **Error Reporting**: If a plugin fails or exits non-zero, its `stderr` is shown in a dismissible toast instead of failing silently.
 - **System Clipboard Integration**: The text output of any executed plugin is automatically written back to your OS clipboard, making it instantly available for paste actions anywhere.
 
 ### Example Plugins included
 
-We have included some fully commented examples inside the `src-tauri/plugins/examples` folder to help you get started:
-1. `translator.py`: A python script that uses `googletrans` to translate the clipboard content to English.
-2. `dictionary.sh`: A bash script that takes a single word and fetches its definition from a free dictionary API, returning Markdown format!
-3. `grokpedia.ts`: A TypeScript plugin that simulates an API lookup and outputs styled Markdown. It can be run using `bun run grokpedia.ts` or `npx tsx grokpedia.ts`.
+We have included some fully commented, **working** examples inside the `src-tauri/plugins/examples` folder to help you get started. They all hit real APIs and need no extra dependencies beyond their runtime:
+1. `translator.py`: A Python script (standard library only) that translates the clipboard content via Google's public `gtx` endpoint, auto-detecting the source language. Target language defaults to English and can be overridden, e.g. `"args": ["translator.py", "es"]`.
+2. `dictionary.sh`: A Bash script that takes a single word and fetches its definition from the free Dictionary API, formatting it as Markdown using `jq` or `python3` (whichever is available).
+3. `grokpedia.ts`: A TypeScript plugin that runs a **real search against [Grokipedia](https://grokipedia.com)** and returns the top results as Markdown with links. Run it with `bun run grokpedia.ts` (or `npx tsx grokpedia.ts` on Node.js ≥ 18).
 
