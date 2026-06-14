@@ -60,6 +60,29 @@ body {
   border-bottom: 1px solid var(--border-color);
 }
 
+.logo-area {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.logo-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.app-logo {
+  width: 28px;
+  height: 28px;
+  filter: drop-shadow(0 2px 6px rgba(234, 88, 12, 0.35));
+  transition: transform 0.3s ease;
+}
+
+.logo-title-row:hover .app-logo {
+  transform: rotate(-10deg) scale(1.1);
+}
+
 .logo-area h1 {
   font-size: 1.8rem;
   font-weight: 700;
@@ -77,6 +100,20 @@ body {
   color: var(--accent-green);
   background-color: rgba(16, 119, 81, 0.15);
   border: 1px solid rgba(16, 119, 81, 0.3);
+  padding: 0.2rem 0.6rem;
+  border-radius: 9999px;
+  margin-top: 0.3rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.shield-unrestricted {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--accent-orange);
+  background-color: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
   padding: 0.2rem 0.6rem;
   border-radius: 9999px;
   margin-top: 0.3rem;

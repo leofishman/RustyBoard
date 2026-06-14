@@ -654,8 +654,35 @@ pub fn App() -> impl IntoView {
         <main class="container">
             <header class="header">
                 <div class="logo-area">
-                    <h1>"RustyBoard"</h1>
-                    <span class="shield">"🛡️ Security-First Active"</span>
+                    <div class="logo-title-row">
+                        <svg class="app-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" stroke="url(#rustyGradient)" />
+                            <rect x="8" y="2" width="8" height="4" rx="1" ry="1" fill="url(#metalGradient)" stroke="url(#rustyGradient)" stroke-width="1.5" />
+                            <line x1="8" y1="10" x2="16" y2="10" stroke="url(#rustyGradient)" stroke-width="1.5" />
+                            <line x1="8" y1="14" x2="14" y2="14" stroke="url(#rustyGradient)" stroke-width="1.5" />
+                            <circle cx="12" cy="4" r="1" fill="#f59e0b" />
+                            <defs>
+                                <linearGradient id="rustyGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                    <stop offset="0%" stop-color="#ea580c" />
+                                    <stop offset="50%" stop-color="#b45309" />
+                                    <stop offset="100%" stop-color="#78350f" />
+                                </linearGradient>
+                                <linearGradient id="metalGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                    <stop offset="0%" stop-color="#94a3b8" />
+                                    <stop offset="100%" stop-color="#475569" />
+                                </linearGradient>
+                            </defs>
+                        </svg>
+                        <h1>"RustyBoard"</h1>
+                    </div>
+                    {move || {
+                        let level = persist_level.get();
+                        if level == "All" {
+                            view! { <span class="shield-unrestricted">"⚠️ Unrestricted Mode"</span> }.into_any()
+                        } else {
+                            view! { <span class="shield">"🛡️ Security-First Active"</span> }.into_any()
+                        }
+                    }}
                 </div>
                 <div class="settings-area">
                     <label class="setting-label">
