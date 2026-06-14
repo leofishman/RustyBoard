@@ -213,6 +213,25 @@ fn copy_to_clipboard(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn delete_clipboard_item(app: AppHandle, id: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    
+    // 1. Remove from in-memory history
+    {
+        let mut history = state.history.lock().map_err(|e| e.to_string())?;
+        history.retain(|item| item.id != id);
+    }
+    
+    // 2. Remove from database
+    let _ = database::delete_item(&state.db_path, &id);
+    
+    // 3. Update system tray menu
+    let _ = update_tray_menu(&app);
+    
+    Ok(())
+}
+
+#[tauri::command]
 fn get_shortcut(app: AppHandle) -> String {
     let config = config::load_config(&app);
     config.shortcut
@@ -621,6 +640,7 @@ impl ClipboardHandler for ClipboardMonitor {
           .invoke_handler(tauri::generate_handler![
               get_history,
               copy_to_clipboard,
+              delete_clipboard_item,
               get_shortcut,
               set_shortcut,
               get_persist_level,

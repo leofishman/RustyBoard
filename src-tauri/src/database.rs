@@ -114,6 +114,15 @@ pub fn run_cleanup(db_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+pub fn delete_item(db_path: &Path, id: &str) -> Result<(), String> {
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM history WHERE id = ?1",
+        params![id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,6 +209,27 @@ mod tests {
         assert!(history.iter().any(|x| x.id == "new_cred"));
         assert!(history.iter().any(|x| x.id == "old_none"));
         assert!(!history.iter().any(|x| x.id == "old_cred"));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn test_db_delete_item() {
+        let temp_dir = std::env::temp_dir();
+        let db_path = temp_dir.join(format!("test_history_delete_{}.db", uuid::Uuid::new_v4()));
+
+        assert!(init_db(&db_path).is_ok());
+
+        let item = get_dummy_item("to_delete", Sensitivity::None, 1000);
+        assert!(save_item(&db_path, &item, PersistLevel::All).is_ok());
+
+        let history = load_history(&db_path).unwrap();
+        assert_eq!(history.len(), 1);
+
+        assert!(delete_item(&db_path, "to_delete").is_ok());
+
+        let history = load_history(&db_path).unwrap();
+        assert!(history.is_empty());
 
         let _ = std::fs::remove_file(&db_path);
     }

@@ -189,6 +189,8 @@ fn ClipboardCard(
     plugins: Signal<Vec<PluginDefinition>>,
     on_run_plugin: Action<(String, String), (), LocalStorage>,
     on_trigger_warning: WriteSignal<Option<(String, String, String)>>,
+    #[prop(into)] is_active: Signal<bool>,
+    on_delete: Action<String, (), LocalStorage>,
 ) -> impl IntoView {
     let (revealed, set_revealed) = signal(false);
     let (copied_indicator, set_copied_indicator) = signal(false);
@@ -214,13 +216,11 @@ fn ClipboardCard(
         !revealed.get() && (sensitivity == Sensitivity::Secret || sensitivity == Sensitivity::Credential)
     };
 
-    let copy_id = id.clone();
-    let handle_copy = move |_| {
-        on_copy.dispatch(copy_id.clone());
-        set_copied_indicator.set(true);
-        set_timeout(move || {
-            set_copied_indicator.set(false);
-        }, 1500);
+
+
+    let delete_id = id.clone();
+    let handle_delete = move |_| {
+        on_delete.dispatch(delete_id.clone());
     };
 
     let time_str = format_timestamp(item.timestamp);
@@ -418,9 +418,35 @@ fn ClipboardCard(
                         }
                     }}
 
-                    <button class="btn btn-primary" on:click=handle_copy>
-                        {move || if copied_indicator.get() { "✓ Copied!" } else { "📋 Copy" }}
+                    <button class="btn btn-danger" on:click=handle_delete>
+                        "🗑️ Delete"
                     </button>
+
+                    {
+                        let on_copy = on_copy.clone();
+                        let copy_id = id.clone();
+                        let set_copied_indicator = set_copied_indicator.clone();
+                        move || {
+                            if is_active.get() {
+                                ().into_any()
+                            } else {
+                                let on_copy = on_copy.clone();
+                                let copy_id = copy_id.clone();
+                                let set_copied_indicator = set_copied_indicator.clone();
+                                view! {
+                                    <button class="btn btn-primary" on:click=move |_| {
+                                        on_copy.dispatch(copy_id.clone());
+                                        set_copied_indicator.set(true);
+                                        set_timeout(move || {
+                                            set_copied_indicator.set(false);
+                                        }, 1500);
+                                    }>
+                                        {move || if copied_indicator.get() { "✓ Copied!" } else { "📋 Copy" }}
+                                    </button>
+                                }.into_any()
+                            }
+                        }
+                    }
 
                     {
                         let ct_plugin_clone = ct_plugin.clone();
@@ -604,6 +630,22 @@ pub fn App() -> impl IntoView {
         }
     });
 
+    // 4c. Action to Delete from History
+    let delete_item = Action::new_local({
+        let set_history = set_history.clone();
+        move |id: &String| {
+            let id = id.clone();
+            let set_history = set_history.clone();
+            async move {
+                let args = serde_wasm_bindgen::to_value(&CopyArgs { id: id.clone() }).unwrap();
+                let _ = invoke("delete_clipboard_item", args).await;
+                set_history.update(|h| {
+                    h.retain(|item| item.id != id);
+                });
+            }
+        }
+    });
+
     // 4b. Action to Run Plugin
     let run_plugin = Action::new_local(move |args: &(String, String)| {
         let plugin_id = args.0.clone();
@@ -716,9 +758,28 @@ pub fn App() -> impl IntoView {
                             <For
                                 each=move || history.get()
                                 key=|item| item.id.clone()
-                                children=move |item| {
-                                    view! {
-                                        <ClipboardCard item=item.clone() on_copy=copy_item plugins=plugins.into() on_run_plugin=run_plugin on_trigger_warning=set_pending_plugin_run />
+                                children={
+                                    let copy_item = copy_item.clone();
+                                    let run_plugin = run_plugin.clone();
+                                    let set_pending_plugin_run = set_pending_plugin_run.clone();
+                                    let delete_item = delete_item.clone();
+                                    let history = history.clone();
+                                    move |item| {
+                                        let item_id = item.id.clone();
+                                        let is_active = Signal::derive(move || {
+                                            history.get().first().map(|x| x.id.clone()) == Some(item_id.clone())
+                                        });
+                                        view! {
+                                            <ClipboardCard
+                                                item=item.clone()
+                                                on_copy=copy_item.clone()
+                                                plugins=plugins.into()
+                                                on_run_plugin=run_plugin.clone()
+                                                on_trigger_warning=set_pending_plugin_run.clone()
+                                                is_active=is_active
+                                                on_delete=delete_item.clone()
+                                            />
+                                        }
                                     }
                                 }
                             />
