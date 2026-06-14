@@ -375,7 +375,7 @@ fn run_plugin(app: AppHandle, plugin_id: String, item_id: String) -> Result<UICl
         thumbnail: None,
     };
 
-    // Save item locally and in UI
+    // Save item in memory.
     {
         let mut history = state.history.lock().unwrap();
         history.insert(0, new_item.clone());
@@ -384,17 +384,23 @@ fn run_plugin(app: AppHandle, plugin_id: String, item_id: String) -> Result<UICl
         }
     }
 
-    let config = config::load_config(&app);
-    let _ = database::save_item(&state.db_path, &new_item, config.persist_level);
-    let _ = database::run_cleanup(&state.db_path);
-
+    // Emit to the UI first so the plugin result shows up instantly.
     let new_item_id = new_item.id.clone();
-    let ui_item: UIClipboardItem = new_item.into();
+    let ui_item: UIClipboardItem = new_item.clone().into();
     let _ = app.emit("clipboard-changed", ui_item.clone());
-    let _ = update_tray_menu(&app);
+    schedule_tray_update(&app);
 
-    // Copy the output of the plugin to the system clipboard
+    // Copy the output of the plugin to the system clipboard.
     let _ = copy_item_by_id(&app, &new_item_id);
+
+    // Persist in the background so disk I/O never delays the UI.
+    let app_handle = app.clone();
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = config::load_config(&app_handle);
+        let _ = database::save_item(&db_path, &new_item, config.persist_level);
+        let _ = database::run_cleanup(&db_path);
+    });
 
     Ok(ui_item)
 }
@@ -542,6 +548,7 @@ impl ClipboardMonitor {
     }
 
     fn save_and_emit(&self, state: &State<'_, AppState>, new_item: ClipboardItem) {
+        // 1. Update in-memory history.
         {
             let mut history = state.history.lock().unwrap();
             history.insert(0, new_item.clone());
@@ -550,14 +557,23 @@ impl ClipboardMonitor {
             }
         }
 
-        // Save to SQLite & run cleanup
-        let config = config::load_config(&self.app_handle);
-        let _ = database::save_item(&state.db_path, &new_item, config.persist_level);
-        let _ = database::run_cleanup(&state.db_path);
-
-        let ui_item: UIClipboardItem = new_item.into();
+        // 2. Emit to the UI *first* so the new clip appears at the top instantly,
+        // before any disk I/O.
+        let ui_item: UIClipboardItem = new_item.clone().into();
         let _ = self.app_handle.emit("clipboard-changed", ui_item);
-        let _ = update_tray_menu(&self.app_handle);
+
+        // 3. Rebuild the tray menu (debounced, off the main-thread hot path).
+        schedule_tray_update(&self.app_handle);
+
+        // 4. Persist to SQLite and run cleanup in the background so disk work
+        // never delays the UI update.
+        let app_handle = self.app_handle.clone();
+        let db_path = state.db_path.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let config = config::load_config(&app_handle);
+            let _ = database::save_item(&db_path, &new_item, config.persist_level);
+            let _ = database::run_cleanup(&db_path);
+        });
     }
 }
 

@@ -877,48 +877,43 @@ pub fn App() -> impl IntoView {
             </header>
 
             <div class="history-list">
-                {move || {
-                    let items = history.get();
-                    if items.is_empty() {
-                        view! {
-                            <div class="empty-state">
-                                <span class="empty-icon">"📋"</span>
-                                <p>"Clipboard history is empty. Copy some text or images!"</p>
-                            </div>
-                        }.into_any()
-                    } else {
-                        view! {
-                            <For
-                                each=move || history.get()
-                                key=|item| item.id.clone()
-                                children={
-                                    let copy_item = copy_item.clone();
-                                    let run_plugin = run_plugin.clone();
-                                    let set_pending_plugin_run = set_pending_plugin_run.clone();
-                                    let delete_item = delete_item.clone();
-                                    let history = history.clone();
-                                    move |item| {
-                                        let item_id = item.id.clone();
-                                        let is_active = Signal::derive(move || {
-                                            history.get().first().map(|x| x.id.clone()) == Some(item_id.clone())
-                                        });
-                                        view! {
-                                            <ClipboardCard
-                                                item=item.clone()
-                                                on_copy=copy_item.clone()
-                                                plugins=plugins.into()
-                                                on_run_plugin=run_plugin.clone()
-                                                on_trigger_warning=set_pending_plugin_run.clone()
-                                                is_active=is_active
-                                                on_delete=delete_item.clone()
-                                            />
-                                        }
-                                    }
-                                }
-                            />
-                        }.into_any()
+                // Empty-state and list are kept as siblings so the <For> is created
+                // exactly once and reacts to `history` internally. Wrapping the <For>
+                // in a closure that also reads `history` would recreate it on every
+                // change, breaking reactivity (stale handlers, list not updating).
+                <Show when=move || history.get().is_empty()>
+                    <div class="empty-state">
+                        <span class="empty-icon">"📋"</span>
+                        <p>"Clipboard history is empty. Copy some text or images!"</p>
+                    </div>
+                </Show>
+                <For
+                    each=move || history.get()
+                    key=|item| item.id.clone()
+                    children={
+                        let copy_item = copy_item.clone();
+                        let run_plugin = run_plugin.clone();
+                        let set_pending_plugin_run = set_pending_plugin_run.clone();
+                        let delete_item = delete_item.clone();
+                        move |item| {
+                            let item_id = item.id.clone();
+                            let is_active = Signal::derive(move || {
+                                history.get().first().map(|x| x.id.clone()) == Some(item_id.clone())
+                            });
+                            view! {
+                                <ClipboardCard
+                                    item=item.clone()
+                                    on_copy=copy_item.clone()
+                                    plugins=plugins.into()
+                                    on_run_plugin=run_plugin.clone()
+                                    on_trigger_warning=set_pending_plugin_run.clone()
+                                    is_active=is_active
+                                    on_delete=delete_item.clone()
+                                />
+                            }
+                        }
                     }
-                }}
+                />
             </div>
 
             {move || {
