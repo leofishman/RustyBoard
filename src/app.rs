@@ -225,6 +225,22 @@ fn ClipboardCard(
         DetectedType::Text
     };
 
+    // Mermaid is initialized with startOnLoad:false, so the diagram div created in
+    // the view is never drawn on its own. Trigger the render explicitly once the
+    // node is mounted, and re-run it whenever the raw-view toggle flips back.
+    if detected_type == DetectedType::Mermaid {
+        let container_id = format!("mermaid-{}", item.id);
+        let code = display_content.clone();
+        Effect::new(move |_| {
+            if !view_raw.get() {
+                let container_id = container_id.clone();
+                let code = code.clone();
+                // Defer so the target element exists before mermaid renders into it.
+                set_timeout(move || render_mermaid(&container_id, &code), 0);
+            }
+        });
+    }
+
     let is_masked = move || {
         !revealed.get() && (sensitivity == Sensitivity::Secret || sensitivity == Sensitivity::Credential)
     };
