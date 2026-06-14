@@ -23,6 +23,12 @@ const ENDPOINT = "https://grokipedia.com/api/typeahead";
 const PAGE_BASE = "https://grokipedia.com/page";
 const MAX_RESULTS = 5;
 
+// Typeahead search only makes sense for a few words. RustyBoard already hides
+// this plugin for long items (see "max_words"/"max_chars" in grokpedia.json),
+// but we guard here too in case the script is run directly.
+const MAX_QUERY_WORDS = 6;
+const MAX_QUERY_CHARS = 80;
+
 interface TypeaheadResult {
     slug: string;
     title: string;
@@ -58,6 +64,15 @@ async function main() {
 
     if (!query) {
         console.log("Error: Please copy a search term before running the Grokipedia plugin.");
+        process.exit(0);
+    }
+
+    const wordCount = query.split(/\s+/).length;
+    if (wordCount > MAX_QUERY_WORDS || query.length > MAX_QUERY_CHARS) {
+        console.log(
+            `### 🤖 Grokipedia\n\nThat looks like a lot of text (${wordCount} words). ` +
+            `This plugin searches for a short term — try copying just one or two words.`
+        );
         process.exit(0);
     }
 

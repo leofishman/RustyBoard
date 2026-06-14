@@ -54,6 +54,27 @@ pub struct PluginDefinition {
     pub id: String,
     pub name: String,
     pub description: String,
+    #[serde(default)]
+    pub max_chars: Option<usize>,
+    #[serde(default)]
+    pub max_words: Option<usize>,
+}
+
+impl PluginDefinition {
+    /// Whether this plugin should be offered for an item with the given text size.
+    fn accepts(&self, char_count: usize, word_count: usize) -> bool {
+        if let Some(max) = self.max_chars {
+            if char_count > max {
+                return false;
+            }
+        }
+        if let Some(max) = self.max_words {
+            if word_count > max {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 #[derive(Serialize)]
@@ -193,6 +214,10 @@ fn ClipboardCard(
     let dc_body = display_content.clone();
     let ct_footer = content_type.clone();
     let ct_plugin = content_type.clone();
+
+    // Text size of this item, used to decide which plugins are applicable.
+    let plugin_char_count = display_content.chars().count();
+    let plugin_word_count = display_content.split_whitespace().count();
 
     view! {
         <div class=move || {
@@ -379,7 +404,11 @@ fn ClipboardCard(
                         let set_warning = set_show_warning_modal.clone();
                         let set_show = set_show_plugins.clone();
                         move || {
-                            if ct_plugin_clone == "text" && !plugins.get().is_empty() {
+                            let applicable: Vec<PluginDefinition> = plugins.get()
+                                .into_iter()
+                                .filter(|p| p.accepts(plugin_char_count, plugin_word_count))
+                                .collect();
+                            if ct_plugin_clone == "text" && !applicable.is_empty() {
                                 let on_run = on_run.clone();
                                 let iid = iid.clone();
                                 let set_pending = set_pending.clone();
@@ -403,10 +432,17 @@ fn ClipboardCard(
                                                     let set_pending = set_pending.clone();
                                                     let set_warning = set_warning.clone();
                                                     let set_show = set_show.clone();
+                                                    // Lifted out of view! because the turbofish angle brackets
+                                                    // would otherwise be parsed as tags by the macro.
+                                                    let each_plugins = move || -> Vec<PluginDefinition> {
+                                                        plugins.get().into_iter()
+                                                            .filter(|p| p.accepts(plugin_char_count, plugin_word_count))
+                                                            .collect()
+                                                    };
                                                     view! {
                                                         <div class="plugin-menu">
                                                             <For
-                                                                each=move || plugins.get()
+                                                                each=each_plugins
                                                                 key=|p| p.id.clone()
                                                                 children=move |p| {
                                                                     let pid = p.id.clone();

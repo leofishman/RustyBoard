@@ -19,6 +19,13 @@ pub struct PluginDefinition {
     pub description: String,
     pub command: String,
     pub args: Vec<String>,
+    /// Optional input constraints. When set, RustyBoard only offers the plugin
+    /// for clipboard items whose text fits within them (e.g. a search plugin
+    /// that only makes sense for a couple of words).
+    #[serde(default)]
+    pub max_chars: Option<usize>,
+    #[serde(default)]
+    pub max_words: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -48,6 +55,8 @@ pub fn init_plugins_dir(app: &AppHandle) -> Result<(), String> {
             description: "Converts text to uppercase".to_string(),
             command: "tr".to_string(),
             args: vec!["a-z".to_string(), "A-Z".to_string()],
+            max_chars: None,
+            max_words: None,
         };
         let example_path = dir.join("uppercase.json");
         let content = serde_json::to_string_pretty(&example).map_err(|e| e.to_string())?;

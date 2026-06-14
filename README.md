@@ -101,6 +101,23 @@ RustyBoard ships **with no plugins enabled by default** — we keep the app ligh
 
 When a plugin is invoked, RustyBoard takes the *raw text content* of the clipboard item and pipes it directly into the `stdin` of the defined command. The `stdout` of that command is then safely captured, sanitized, and injected back into RustyBoard as a brand new clipboard entry!
 
+#### Input constraints (optional)
+
+A plugin can declare how much text it can sensibly handle, and RustyBoard will only offer it for clipboard items that fit. This keeps, for example, a single-word dictionary lookup or a short search from showing up when you've copied an entire document:
+
+```json
+{
+  "id": "ts-grokpedia",
+  "name": "Search Grokipedia",
+  "command": "bun",
+  "args": ["run", "grokpedia.ts"],
+  "max_words": 4,
+  "max_chars": 60
+}
+```
+
+Both fields are optional; omit them and the plugin is offered for any text item.
+
 ### Example: Fabric AI Integration
 
 You can easily integrate external AI workflows, like [Fabric](https://github.com/danielmiessler/fabric), by creating a `fabric-summary.json` file in the plugins folder:
