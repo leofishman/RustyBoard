@@ -31,7 +31,9 @@ pub fn init_db(db_path: &Path) -> Result<(), String> {
 pub fn save_item(db_path: &Path, item: &ClipboardItem, level: PersistLevel) -> Result<(), String> {
     let should_save = match level {
         PersistLevel::None => item.sensitivity == Sensitivity::None,
-        PersistLevel::Sensitive => item.sensitivity == Sensitivity::None || item.sensitivity == Sensitivity::Personal,
+        // Balanced: persist everything except Secret. Credentials are kept but
+        // expired by the 2h TTL in `run_cleanup`.
+        PersistLevel::Sensitive => item.sensitivity != Sensitivity::Secret,
         PersistLevel::All => true,
     };
 
@@ -94,23 +96,26 @@ pub fn load_history(db_path: &Path) -> Result<Vec<ClipboardItem>, String> {
     Ok(items)
 }
 
-pub fn run_cleanup(db_path: &Path) -> Result<(), String> {
+pub fn run_cleanup(db_path: &Path, level: PersistLevel) -> Result<(), String> {
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
 
-    // TTL for Credential items: 2 hours (7200 seconds)
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let cutoff = now - 7200;
+    // The Credential 2h TTL applies in every mode except `All` (Unrestricted),
+    // which keeps everything forever. In `None` mode this also clears any
+    // credential leftovers from a previous Balanced session.
+    if level != PersistLevel::All {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let cutoff = now - 7200; // 2 hours in seconds
 
-    // Delete credential entries older than 2 hours
-    let _ = conn.execute(
-        "DELETE FROM history WHERE sensitivity = 'Credential' AND timestamp < ?1",
-        params![cutoff],
-    );
+        let _ = conn.execute(
+            "DELETE FROM history WHERE sensitivity = 'Credential' AND timestamp < ?1",
+            params![cutoff],
+        );
+    }
 
-    // Enforce history size limit of 100 items
+    // Enforce history size limit of 100 items (always).
     let _ = conn.execute(
         "DELETE FROM history WHERE id NOT IN (
             SELECT id FROM history ORDER BY timestamp DESC LIMIT 100
@@ -178,17 +183,18 @@ mod tests {
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].id, "id_none");
 
-        // 2. Sensitive level (Balanced) - None and Personal persist, Credential and Secret do not
+        // 2. Sensitive level (Balanced) - None, Personal and Credential persist
+        // (Credential with TTL); Secret does not.
         assert!(save_item(&db_path, &item_personal, PersistLevel::Sensitive).is_ok());
         assert!(save_item(&db_path, &item_cred, PersistLevel::Sensitive).is_ok());
         assert!(save_item(&db_path, &item_secret, PersistLevel::Sensitive).is_ok());
 
         let history = load_history(&db_path).unwrap();
-        // None (from test 1) and Personal should have been saved
-        assert_eq!(history.len(), 2);
+        // None (from test 1), Personal and Credential saved; Secret not.
+        assert_eq!(history.len(), 3);
         assert!(history.iter().any(|x| x.id == "id_none"));
         assert!(history.iter().any(|x| x.id == "id_personal"));
-        assert!(!history.iter().any(|x| x.id == "id_cred"));
+        assert!(history.iter().any(|x| x.id == "id_cred"));
         assert!(!history.iter().any(|x| x.id == "id_secret"));
 
         // 3. All level (Unrestricted) - everything persists including secrets and credentials
@@ -223,11 +229,13 @@ mod tests {
         // Regular item (older than 2 hours)
         let old_none = get_dummy_item("old_none", Sensitivity::None, now - 8000);
 
-        assert!(save_item(&db_path, &old_cred, PersistLevel::All).is_ok());
-        assert!(save_item(&db_path, &new_cred, PersistLevel::All).is_ok());
-        assert!(save_item(&db_path, &old_none, PersistLevel::All).is_ok());
+        // Saved in Balanced mode, where credentials persist with a TTL.
+        assert!(save_item(&db_path, &old_cred, PersistLevel::Sensitive).is_ok());
+        assert!(save_item(&db_path, &new_cred, PersistLevel::Sensitive).is_ok());
+        assert!(save_item(&db_path, &old_none, PersistLevel::Sensitive).is_ok());
 
-        assert!(run_cleanup(&db_path).is_ok());
+        // Cleanup in Balanced mode applies the credential TTL.
+        assert!(run_cleanup(&db_path, PersistLevel::Sensitive).is_ok());
 
         let history = load_history(&db_path).unwrap();
         // should have new_cred and old_none, but old_cred should be deleted
@@ -235,6 +243,13 @@ mod tests {
         assert!(history.iter().any(|x| x.id == "new_cred"));
         assert!(history.iter().any(|x| x.id == "old_none"));
         assert!(!history.iter().any(|x| x.id == "old_cred"));
+
+        // In All (Unrestricted) mode the TTL must NOT delete credentials.
+        let old_cred2 = get_dummy_item("old_cred2", Sensitivity::Credential, now - 8000);
+        assert!(save_item(&db_path, &old_cred2, PersistLevel::All).is_ok());
+        assert!(run_cleanup(&db_path, PersistLevel::All).is_ok());
+        let history = load_history(&db_path).unwrap();
+        assert!(history.iter().any(|x| x.id == "old_cred2"));
 
         let _ = std::fs::remove_file(&db_path);
     }

@@ -399,7 +399,7 @@ fn run_plugin(app: AppHandle, plugin_id: String, item_id: String) -> Result<UICl
     tauri::async_runtime::spawn_blocking(move || {
         let config = config::load_config(&app_handle);
         let _ = database::save_item(&db_path, &new_item, config.persist_level);
-        let _ = database::run_cleanup(&db_path);
+        let _ = database::run_cleanup(&db_path, config.persist_level);
     });
 
     Ok(ui_item)
@@ -572,7 +572,7 @@ impl ClipboardMonitor {
         tauri::async_runtime::spawn_blocking(move || {
             let config = config::load_config(&app_handle);
             let _ = database::save_item(&db_path, &new_item, config.persist_level);
-            let _ = database::run_cleanup(&db_path);
+            let _ = database::run_cleanup(&db_path, config.persist_level);
         });
     }
 }
@@ -638,7 +638,7 @@ impl ClipboardHandler for ClipboardMonitor {
                   .unwrap_or_else(|_| std::path::PathBuf::from("history.db"));
               
               let _ = database::init_db(&db_path);
-              let _ = database::run_cleanup(&db_path);
+              let _ = database::run_cleanup(&db_path, config::load_config(&handle).persist_level);
 
               // 2. Initialize Plugin Directory
               let _ = plugins::init_plugins_dir(&handle);
@@ -698,8 +698,9 @@ impl ClipboardHandler for ClipboardMonitor {
                               }
                           }
                           
-                          // Run DB cleanup only if not in Unrestricted mode
-                          let _ = database::run_cleanup(&state.db_path);
+                          // Unrestricted mode already `continue`d above, so this
+                          // only runs for None/Balanced.
+                          let _ = database::run_cleanup(&state.db_path, config.persist_level);
                           
                           if changed {
                               let _ = update_tray_menu(&periodic_handle);
