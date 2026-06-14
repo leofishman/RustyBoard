@@ -50,7 +50,7 @@ pub fn classify_text(text: &str) -> DetectedType {
         || lower.starts_with("journey")
         || lower.starts_with("pie")
         || lower.starts_with("gitgraph")
-        || (trimmed.starts_with("```mermaid") && trimmed.ends_with("```"))
+        || trimmed.starts_with("```mermaid")
     {
         return DetectedType::Mermaid;
     }

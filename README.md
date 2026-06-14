@@ -123,7 +123,7 @@ A plugin can declare what kind of input it can sensibly handle, and RustyBoard w
 | `max_words` | Hide the plugin when the item has more whitespace-separated words than this. |
 | `applies_to` | List of detected content types the plugin applies to. Valid values: `text`, `url`, `json`, `svg`, `mermaid`, `markdown`. |
 
-All three fields are optional; omit them and the plugin is offered for any text item. Plugins currently operate on text only — image support is planned but not yet wired into the execution path.
+All three fields are optional. When `applies_to` is omitted, the plugin is offered for prose-like items (`text`, `markdown`, `url`) but **not** for specialized structured/visual types (`json`, `svg`, `mermaid`), where a generic text transform rarely makes sense — a plugin targeting those must opt in explicitly (see `prettify-json` below). Plugins currently operate on text only; image support is planned but not yet wired into the execution path.
 
 ```json
 {

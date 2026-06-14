@@ -104,10 +104,12 @@ impl PluginDefinition {
     }
 
     /// Whether this plugin applies to the given detected content type.
-    /// An unset `applies_to` means it applies to any text item.
     fn accepts_type(&self, type_id: &str) -> bool {
         match &self.applies_to {
-            None => true,
+            // Default: apply to prose-like text (text, markdown, url) but NOT to
+            // specialized structured/visual types, where a generic text transform
+            // rarely makes sense. Plugins for those must opt in via `applies_to`.
+            None => !matches!(type_id, "json" | "svg" | "mermaid"),
             Some(types) => types.iter().any(|t| t.eq_ignore_ascii_case(type_id)),
         }
     }
@@ -183,6 +185,26 @@ fn format_timestamp(timestamp: u64) -> String {
     }
 }
 
+/// Extracts the bare Mermaid source from a clipboard item, stripping a
+/// ```` ```mermaid ```` … ```` ``` ```` fenced block if present (mermaid.render
+/// chokes on the fences). Bare diagrams are returned unchanged.
+fn extract_mermaid_code(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let body = trimmed
+        .strip_prefix("```mermaid")
+        .or_else(|| trimmed.strip_prefix("```"));
+    match body {
+        Some(rest) => {
+            let rest = rest.trim_start_matches(['\r', '\n']);
+            match rest.rfind("```") {
+                Some(end) => rest[..end].trim().to_string(),
+                None => rest.trim().to_string(),
+            }
+        }
+        None => trimmed.to_string(),
+    }
+}
+
 fn render_markdown(md: &str) -> String {
     // Escape raw HTML inside MD first
     let escaped = md.replace('&', "&amp;")
@@ -230,7 +252,7 @@ fn ClipboardCard(
     // node is mounted, and re-run it whenever the raw-view toggle flips back.
     if detected_type == DetectedType::Mermaid {
         let container_id = format!("mermaid-{}", item.id);
-        let code = display_content.clone();
+        let code = extract_mermaid_code(&display_content);
         Effect::new(move |_| {
             if !view_raw.get() {
                 let container_id = container_id.clone();
