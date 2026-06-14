@@ -205,12 +205,37 @@ fn extract_mermaid_code(raw: &str) -> String {
     }
 }
 
+/// Whether a link/image URL uses a scheme that can execute script when followed.
+/// Whitespace and control characters are stripped first so obfuscated schemes
+/// like `java\tscript:` are still caught.
+fn is_dangerous_url(url: &str) -> bool {
+    let cleaned: String = url
+        .chars()
+        .filter(|c| !c.is_whitespace() && !c.is_control())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    cleaned.starts_with("javascript:")
+        || cleaned.starts_with("vbscript:")
+        || cleaned.starts_with("data:")
+}
+
 fn render_markdown(md: &str) -> String {
-    // Escape raw HTML inside MD first
+    use pulldown_cmark::{Event, Parser, Tag};
+
+    // Escape raw HTML inside MD first.
     let escaped = md.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;");
-    let parser = pulldown_cmark::Parser::new(&escaped);
+
+    // Neutralize dangerous link targets (e.g. `[x](javascript:...)`), which
+    // pulldown-cmark would otherwise emit as a clickable href.
+    let parser = Parser::new(&escaped).map(|event| match event {
+        Event::Start(Tag::Link { link_type, dest_url, title, id }) if is_dangerous_url(&dest_url) => {
+            Event::Start(Tag::Link { link_type, dest_url: "#".into(), title, id })
+        }
+        other => other,
+    });
+
     let mut html_output = String::new();
     pulldown_cmark::html::push_html(&mut html_output, parser);
     html_output
