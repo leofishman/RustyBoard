@@ -114,31 +114,77 @@ fn update_tray_menu(app: &AppHandle) -> Result<(), String> {
         menu_builder = menu_builder.item(&empty_i);
     } else {
         for item in history.iter().take(15) { // Show top 15 items in tray menu
-            let mut label = item.display_content.clone();
-            // Replace newlines with spaces for clean display in menu
-            label = label.replace('\n', " ").replace('\r', "");
-            // Truncate label to 50 chars for clean display
-            if label.chars().count() > 50 {
-                label = label.chars().take(47).collect::<String>() + "...";
-            }
-            // If label is empty (e.g. image), show indicator
-            if label.trim().is_empty() {
-                if item.content_type == "image" {
-                    label = "[Image]".to_string();
+            let mut label;
+            let mut item_icon = None;
+
+            if item.content_type == "image" {
+                // Decode metadata from base64 png
+                let base64_str = if item.display_content.starts_with("data:image/png;base64,") {
+                    &item.display_content["data:image/png;base64,".len()..]
                 } else {
+                    &item.raw_content
+                };
+
+                if let Ok(bytes) = BASE64.decode(base64_str) {
+                    let size_kb = bytes.len() as f64 / 1024.0;
+                    if let Ok(img) = image::load_from_memory(&bytes) {
+                        let w = img.width();
+                        let h = img.height();
+                        label = format!("[Image - {}x{}px - {:.1} KB]", w, h, size_kb);
+                        
+                        // Build a tiny thumbnail icon (18x18) for the tray menu
+                        let thumbnail = img.resize_exact(18, 18, image::imageops::FilterType::Lanczos3);
+                        let rgba_data = thumbnail.into_rgba8().into_raw();
+                        item_icon = Some(tauri::image::Image::new_owned(rgba_data, 18, 18));
+                    } else {
+                        label = format!("[Image - Unknown dimensions - {:.1} KB]", size_kb);
+                    }
+                } else {
+                    label = "[Image]".to_string();
+                }
+            } else {
+                label = item.display_content.clone();
+                // Replace newlines with spaces for clean display in menu
+                label = label.replace('\n', " ").replace('\r', "");
+                // Truncate label to 50 chars for clean display
+                if label.chars().count() > 50 {
+                    label = label.chars().take(47).collect::<String>() + "...";
+                }
+                if label.trim().is_empty() {
                     label = "[Empty Content]".to_string();
                 }
             }
+
             // Mask secrets / credentials
             if item.sensitivity == security::Sensitivity::Secret {
                 label = "•••••••• [Secret]".to_string();
+                item_icon = None;
             } else if item.sensitivity == security::Sensitivity::Credential {
                 label = "•••••••• [Credential]".to_string();
+                item_icon = None;
             }
 
             // Create custom menu item with item id
-            let clip_i = tauri::menu::MenuItem::with_id(app, &item.id, &label, true, None::<&str>).map_err(|e| e.to_string())?;
-            menu_builder = menu_builder.item(&clip_i);
+            if let Some(icon_img) = item_icon {
+                let clip_i = tauri::menu::IconMenuItem::with_id(
+                    app,
+                    &item.id,
+                    &label,
+                    true,
+                    Some(icon_img),
+                    None::<&str>,
+                ).map_err(|e| e.to_string())?;
+                menu_builder = menu_builder.item(&clip_i);
+            } else {
+                let clip_i = tauri::menu::MenuItem::with_id(
+                    app,
+                    &item.id,
+                    &label,
+                    true,
+                    None::<&str>,
+                ).map_err(|e| e.to_string())?;
+                menu_builder = menu_builder.item(&clip_i);
+            }
         }
     }
     
