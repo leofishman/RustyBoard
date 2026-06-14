@@ -27,6 +27,18 @@ extern "C" {
     fn set_storage_item(key: &str, value: &str);
 }
 
+fn is_tauri() -> bool {
+    let window = match leptos::web_sys::window() {
+        Some(w) => w,
+        None => return false,
+    };
+    let tauri_val = match js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI__")) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    !tauri_val.is_undefined() && !tauri_val.is_null()
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Sensitivity {
     None,
@@ -189,11 +201,14 @@ fn ClipboardCard(
     plugins: Signal<Vec<PluginDefinition>>,
     on_run_plugin: Action<(String, String), (), LocalStorage>,
     on_trigger_warning: WriteSignal<Option<(String, String, String)>>,
+    #[prop(into)] is_active: Signal<bool>,
+    on_delete: Callback<String>,
 ) -> impl IntoView {
     let (revealed, set_revealed) = signal(false);
     let (copied_indicator, set_copied_indicator) = signal(false);
     let (view_raw, set_view_raw) = signal(false);
     let (show_plugins, set_show_plugins) = signal(false);
+    let (deleting, _set_deleting) = signal(false);
 
     let id = item.id.clone();
     let id_mermaid = item.id.clone();
@@ -214,14 +229,9 @@ fn ClipboardCard(
         !revealed.get() && (sensitivity == Sensitivity::Secret || sensitivity == Sensitivity::Credential)
     };
 
-    let copy_id = id.clone();
-    let handle_copy = move |_| {
-        on_copy.dispatch(copy_id.clone());
-        set_copied_indicator.set(true);
-        set_timeout(move || {
-            set_copied_indicator.set(false);
-        }, 1500);
-    };
+
+
+
 
     let time_str = format_timestamp(item.timestamp);
 
@@ -256,258 +266,310 @@ fn ClipboardCard(
             };
             format!("{}{}", base, sens_class)
         }>
-            <div class="card-header">
-                <div class="tags">
-                    <span class=move || {
-                        if ct_class == "image" {
-                            "tag tag-image"
-                        } else {
-                            match dt_class {
-                                DetectedType::Svg => "tag tag-svg",
-                                DetectedType::Url => "tag tag-url",
-                                DetectedType::Json => "tag tag-json",
-                                DetectedType::Mermaid => "tag tag-mermaid",
-                                DetectedType::Markdown => "tag tag-markdown",
-                                DetectedType::Text => "tag tag-text",
-                            }
-                        }
-                    }>
-                        {
-                            if ct_tag == "image" {
-                                "IMAGE"
-                            } else {
-                                match dt_tag {
-                                    DetectedType::Svg => "SVG",
-                                    DetectedType::Url => "URL",
-                                    DetectedType::Json => "JSON",
-                                    DetectedType::Mermaid => "MERMAID",
-                                    DetectedType::Markdown => "MARKDOWN",
-                                    DetectedType::Text => "TEXT",
-                                }
-                            }
-                        }
-                    </span>
+            {move || {
+                if deleting.get() {
+                    view! {
+                        <div class="card-deleting-state">
+                            <div class="spinner-small"></div>
+                            <span>"Deleting item..."</span>
+                        </div>
+                    }.into_any()
+                } else {
+                    let on_copy = on_copy.clone();
+                    let on_run_plugin = on_run_plugin.clone();
+                    let on_trigger_warning = on_trigger_warning.clone();
+                    let plugins = plugins.clone();
+                    let is_active = is_active.clone();
+                    let id = id.clone();
+                    let id_mermaid = id_mermaid.clone();
+                    let id_plugin = id_plugin.clone();
+                    let ct_class = ct_class.clone();
+                    let dt_class = dt_class.clone();
+                    let ct_tag = ct_tag.clone();
+                    let dt_tag = dt_tag.clone();
+                    let time_str = time_str.clone();
+                    let ct_body = ct_body.clone();
+                    let dt_body = dt_body.clone();
+                    let dc_body = dc_body.clone();
+                    let ct_footer = ct_footer.clone();
+                    let ct_plugin = ct_plugin.clone();
 
-                    {match sensitivity {
-                        Sensitivity::Secret => view! { <span class="badge badge-secret">"SECRET"</span> }.into_any(),
-                        Sensitivity::Credential => view! { <span class="badge badge-credential">"CREDENTIAL"</span> }.into_any(),
-                        Sensitivity::Personal => view! { <span class="badge badge-personal">"PERSONAL"</span> }.into_any(),
-                        Sensitivity::None => ().into_any(),
-                    }}
-                </div>
-                <span class="timestamp">{time_str}</span>
-            </div>
-
-            <div class="card-body">
-                {move || {
-                    if is_masked() {
-                        view! {
-                            <div class="masked-content">
-                                {match sensitivity {
-                                    Sensitivity::Secret => "•••••••••••••••• [Encrypted Secret]".to_string(),
-                                    Sensitivity::Credential => {
-                                        if dc_body.len() > 10 {
-                                            format!("{}••••••••{}", &dc_body[0..6], &dc_body[dc_body.len()-4..])
-                                        } else {
-                                            "••••••••".to_string()
+                    view! {
+                        <div class="card-header">
+                            <div class="tags">
+                                <span class=move || {
+                                    if ct_class == "image" {
+                                        "tag tag-image"
+                                    } else {
+                                        match dt_class {
+                                            DetectedType::Svg => "tag tag-svg",
+                                            DetectedType::Url => "tag tag-url",
+                                            DetectedType::Json => "tag tag-json",
+                                            DetectedType::Mermaid => "tag tag-mermaid",
+                                            DetectedType::Markdown => "tag tag-markdown",
+                                            DetectedType::Text => "tag tag-text",
                                         }
-                                    },
-                                    _ => "".to_string()
+                                    }
+                                }>
+                                    {
+                                        if ct_tag == "image" {
+                                            "IMAGE"
+                                        } else {
+                                            match dt_tag {
+                                                DetectedType::Svg => "SVG",
+                                                DetectedType::Url => "URL",
+                                                DetectedType::Json => "JSON",
+                                                DetectedType::Mermaid => "MERMAID",
+                                                DetectedType::Markdown => "MARKDOWN",
+                                                DetectedType::Text => "TEXT",
+                                            }
+                                        }
+                                    }
+                                </span>
+
+                                {match sensitivity {
+                                    Sensitivity::Secret => view! { <span class="badge badge-secret">"SECRET"</span> }.into_any(),
+                                    Sensitivity::Credential => view! { <span class="badge badge-credential">"CREDENTIAL"</span> }.into_any(),
+                                    Sensitivity::Personal => view! { <span class="badge badge-personal">"PERSONAL"</span> }.into_any(),
+                                    Sensitivity::None => ().into_any(),
                                 }}
                             </div>
-                        }.into_any()
-                    } else if ct_body == "image" {
-                        view! {
-                            <div class="image-preview">
-                                <img src=dc_body.clone() alt="Captured Clip" />
-                            </div>
-                        }.into_any()
-                    } else if view_raw.get() {
-                        view! {
-                            <pre class="text-content">{dc_body.clone()}</pre>
-                        }.into_any()
-                    } else {
-                        match dt_body {
-                            DetectedType::Svg => {
-                                view! {
-                                    <div class="svg-preview" inner_html=dc_body.clone()></div>
-                                }.into_any()
-                            }
-                            DetectedType::Url => {
-                                view! {
-                                    <div class="url-preview">
-                                        <a href=dc_body.clone() target="_blank" class="url-link">{dc_body.clone()}</a>
-                                    </div>
-                                }.into_any()
-                            }
-                            DetectedType::Json => {
-                                let formatted = match serde_json::from_str::<serde_json::Value>(&dc_body) {
-                                    Ok(val) => serde_json::to_string_pretty(&val).unwrap_or_else(|_| dc_body.clone()),
-                                    Err(_) => dc_body.clone(),
-                                };
-                                view! {
-                                    <pre class="json-code"><code>{formatted}</code></pre>
-                                }.into_any()
-                            }
-                            DetectedType::Markdown => {
-                                let html = render_markdown(&dc_body);
-                                view! {
-                                    <div class="markdown-preview" inner_html=html></div>
-                                }.into_any()
-                            }
-                            DetectedType::Mermaid => {
-                                let el_id = format!("mermaid-{}", id_mermaid);
-                                let code = if dc_body.starts_with("```mermaid") && dc_body.ends_with("```") {
-                                    let lines: Vec<&str> = dc_body.lines().collect();
-                                    if lines.len() >= 3 {
-                                        lines[1..lines.len()-1].join("\n")
-                                    } else {
-                                        dc_body.clone()
+                            <div class="card-header-right">
+                                <span class="timestamp">{time_str}</span>
+                                <button class="btn-delete-small" title="Delete from history" on:click={
+                                    let on_delete = on_delete.clone();
+                                    let delete_id = id.clone();
+                                    move |_| {
+                                        // Deletion is optimistic, so the card unmounts instantly;
+                                        // no "deleting" spinner needed.
+                                        on_delete.run(delete_id.clone());
                                     }
-                                } else {
-                                    dc_body.clone()
-                                };
-
-                                let el_id_effect = el_id.clone();
-                                Effect::new(move |_| {
-                                    let code = code.clone();
-                                    let el_id = el_id_effect.clone();
-                                    set_timeout(move || {
-                                        render_mermaid(&el_id, &code);
-                                      }, 50);
-                                });
-
-                                view! {
-                                    <div id=el_id class="mermaid-container">
-                                        <div class="mermaid-loading">"Rendering diagram..."</div>
-                                    </div>
-                                }.into_any()
-                            }
-                            DetectedType::Text => {
-                                view! {
-                                    <pre class="text-content">{dc_body.clone()}</pre>
-                                }.into_any()
-                            }
-                        }
-                    }
-                }}
-            </div>
-
-            <div class="card-footer">
-                <div class="card-actions">
-                    {if sensitivity == Sensitivity::Secret || sensitivity == Sensitivity::Credential {
-                        view! {
-                            <button class="btn btn-secondary" on:click=move |_| set_revealed.update(|r| *r = !*r)>
-                                {move || if revealed.get() { "🙈 Hide" } else { "👁️ Reveal" }}
-                            </button>
-                        }.into_any()
-                    } else {
-                        ().into_any()
-                    }}
-
-                    {move || {
-                        let is_switchable = ct_footer == "text" && matches!(dt_class, DetectedType::Markdown | DetectedType::Mermaid | DetectedType::Json | DetectedType::Svg);
-                        if is_switchable {
-                            view! {
-                                <button class="btn btn-secondary" on:click=move |_| set_view_raw.update(|r| *r = !*r)>
-                                    {move || if view_raw.get() { "👁️ Preview" } else { "📝 Raw" }}
+                                }>
+                                    "🗑️"
                                 </button>
-                            }.into_any()
-                        } else {
-                            ().into_any()
-                        }
-                    }}
+                            </div>
+                        </div>
 
-                    <button class="btn btn-primary" on:click=handle_copy>
-                        {move || if copied_indicator.get() { "✓ Copied!" } else { "📋 Copy" }}
-                    </button>
+                        <div class="card-body">
+                            {
+                                let ct_body = ct_body.clone();
+                                let dt_body = dt_body.clone();
+                                let dc_body = dc_body.clone();
+                                move || {
+                                    if is_masked() {
+                                        view! {
+                                            <div class="masked-content">
+                                                {match sensitivity {
+                                                    Sensitivity::Secret => "•••••••••••••••• [Encrypted Secret]".to_string(),
+                                                    Sensitivity::Credential => {
+                                                        if dc_body.len() > 10 {
+                                                            format!("{}••••••••{}", &dc_body[0..6], &dc_body[dc_body.len()-4..])
+                                                        } else {
+                                                            "••••••••".to_string()
+                                                        }
+                                                    },
+                                                    _ => "".to_string()
+                                                }}
+                                            </div>
+                                        }.into_any()
+                                    } else if ct_body == "image" {
+                                        view! {
+                                            <div class="image-content">
+                                                <img src=dc_body.clone() alt="Clipboard Image" />
+                                            </div>
+                                        }.into_any()
+                                    } else {
+                                        match dt_body {
+                                            DetectedType::Svg => {
+                                                view! {
+                                                    <div class="svg-content" inner_html=dc_body.clone() />
+                                                }.into_any()
+                                            }
+                                            DetectedType::Mermaid => {
+                                                let container_id = format!("mermaid-{}", id_mermaid);
+                                                view! {
+                                                    <div class="mermaid-container">
+                                                        {
+                                                            if view_raw.get() {
+                                                                view! { <pre class="raw-text"><code>{dc_body.clone()}</code></pre> }.into_any()
+                                                            } else {
+                                                                view! { <div id=container_id.clone() class="mermaid" data-definition=dc_body.clone()>{dc_body.clone()}</div> }.into_any()
+                                                            }
+                                                        }
+                                                    </div>
+                                                }.into_any()
+                                            }
+                                            DetectedType::Markdown => {
+                                                view! {
+                                                    <div class="markdown-container">
+                                                        {
+                                                            if view_raw.get() {
+                                                                view! { <pre class="raw-text"><code>{dc_body.clone()}</code></pre> }.into_any()
+                                                            } else {
+                                                                let html = render_markdown(&dc_body);
+                                                                view! { <div class="markdown-body" inner_html=html /> }.into_any()
+                                                            }
+                                                        }
+                                                    </div>
+                                                }.into_any()
+                                            }
+                                            _ => {
+                                                view! {
+                                                    <pre class="raw-text"><code>{dc_body.clone()}</code></pre>
+                                                }.into_any()
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        </div>
 
-                    {
-                        let ct_plugin_clone = ct_plugin.clone();
-                        let on_run = on_run_plugin.clone();
-                        let iid = id_plugin.clone();
-                        let trigger_warning = on_trigger_warning.clone();
-                        let set_show = set_show_plugins.clone();
-                        move || {
-                            let applicable: Vec<PluginDefinition> = plugins.get()
-                                .into_iter()
-                                .filter(|p| p.accepts(plugin_char_count, plugin_word_count) && p.accepts_type(plugin_type_id))
-                                .collect();
-                            if ct_plugin_clone == "text" && !applicable.is_empty() {
-                                let on_run = on_run.clone();
-                                let iid = iid.clone();
-                                let trigger_warning = trigger_warning.clone();
-                                let set_show = set_show.clone();
-                                view! {
-                                    <div class="plugin-dropdown">
-                                        <button class="btn btn-tertiary" on:click=move |_| set_show.update(|s| *s = !*s)>
-                                            "🔌 Plugins"
-                                        </button>
-                                        {
+                        <div class="card-footer">
+                            <div class="card-actions">
+                                {
+                                    let sensitivity = sensitivity.clone();
+                                    move || {
+                                        if sensitivity == Sensitivity::Secret || sensitivity == Sensitivity::Credential {
+                                            view! {
+                                                <button class="btn btn-secondary" on:click=move |_| set_revealed.update(|r| *r = !*r)>
+                                                    {move || if revealed.get() { "🙈 Hide" } else { "👁️ Reveal" }}
+                                                </button>
+                                            }.into_any()
+                                        } else {
+                                            ().into_any()
+                                        }
+                                    }
+                                }
+
+                                {move || {
+                                    let is_switchable = ct_footer == "text" && matches!(dt_class, DetectedType::Markdown | DetectedType::Mermaid | DetectedType::Json | DetectedType::Svg);
+                                    if is_switchable {
+                                        view! {
+                                            <button class="btn btn-secondary" on:click=move |_| set_view_raw.update(|r| *r = !*r)>
+                                                {move || if view_raw.get() { "👁️ Preview" } else { "📝 Raw" }}
+                                            </button>
+                                        }.into_any()
+                                    } else {
+                                        ().into_any()
+                                    }
+                                }}
+
+                                {
+                                    let on_copy = on_copy.clone();
+                                    let copy_id = id.clone();
+                                    let set_copied_indicator = set_copied_indicator.clone();
+                                    let is_active = is_active.clone();
+                                    move || {
+                                        if is_active.get() {
+                                            ().into_any()
+                                        } else {
+                                            let on_copy = on_copy.clone();
+                                            let copy_id = copy_id.clone();
+                                            let set_copied_indicator = set_copied_indicator.clone();
+                                            view! {
+                                                <button class="btn btn-primary" on:click=move |_| {
+                                                    on_copy.dispatch(copy_id.clone());
+                                                    set_copied_indicator.set(true);
+                                                    set_timeout(move || {
+                                                        set_copied_indicator.set(false);
+                                                    }, 1500);
+                                                }>
+                                                    {move || if copied_indicator.get() { "✓ Copied!" } else { "📋 Copy" }}
+                                                </button>
+                                            }.into_any()
+                                        }
+                                    }
+                                }
+
+                                {
+                                    let ct_plugin_clone = ct_plugin.clone();
+                                    let on_run = on_run_plugin.clone();
+                                    let iid = id_plugin.clone();
+                                    let trigger_warning = on_trigger_warning.clone();
+                                    let set_show = set_show_plugins.clone();
+                                    move || {
+                                        let applicable: Vec<PluginDefinition> = plugins.get()
+                                            .into_iter()
+                                            .filter(|p| p.accepts(plugin_char_count, plugin_word_count) && p.accepts_type(plugin_type_id))
+                                            .collect();
+                                        if ct_plugin_clone == "text" && !applicable.is_empty() {
                                             let on_run = on_run.clone();
                                             let iid = iid.clone();
                                             let trigger_warning = trigger_warning.clone();
                                             let set_show = set_show.clone();
-                                            move || {
-                                                if show_plugins.get() {
-                                                    let on_run = on_run.clone();
-                                                    let iid = iid.clone();
-                                                    let trigger_warning = trigger_warning.clone();
-                                                    let set_show = set_show.clone();
-                                                    let each_plugins = move || -> Vec<PluginDefinition> {
-                                                        plugins.get().into_iter()
-                                                            .filter(|p| p.accepts(plugin_char_count, plugin_word_count) && p.accepts_type(plugin_type_id))
-                                                            .collect()
-                                                    };
-                                                    view! {
-                                                        <div class="plugin-menu">
-                                                            <For
-                                                                each=each_plugins
-                                                                key=|p| p.id.clone()
-                                                                children=move |p| {
-                                                                    let pid = p.id.clone();
-                                                                    let name = p.name.clone();
-                                                                    let name_for_click = name.clone();
-                                                                    let desc = p.description.clone();
-                                                                    let on_run = on_run.clone();
-                                                                    let iid = iid.clone();
-                                                                    let trigger_warning = trigger_warning.clone();
-                                                                    let set_show = set_show.clone();
-                                                                    view! {
-                                                                        <button class="plugin-item" title=desc on:click=move |_| {
-                                                                            set_show.set(false);
-                                                                            let pid_clone = pid.clone();
-                                                                            let iid_clone = iid.clone();
-                                                                            let name_clone = name_for_click.clone();
-                                                                            let already_accepted = is_plugin_accepted(&pid_clone);
+                                            view! {
+                                                <div class="plugin-dropdown">
+                                                    <button class="btn btn-tertiary" on:click=move |_| set_show.update(|s| *s = !*s)>
+                                                        "🔌 Plugins"
+                                                    </button>
+                                                    {
+                                                        let on_run = on_run.clone();
+                                                        let iid = iid.clone();
+                                                        let trigger_warning = trigger_warning.clone();
+                                                        let set_show = set_show.clone();
+                                                        move || {
+                                                            if show_plugins.get() {
+                                                                let on_run = on_run.clone();
+                                                                let iid = iid.clone();
+                                                                let trigger_warning = trigger_warning.clone();
+                                                                let set_show = set_show.clone();
+                                                                let each_plugins = move || -> Vec<PluginDefinition> {
+                                                                    plugins.get().into_iter()
+                                                                        .filter(|p| p.accepts(plugin_char_count, plugin_word_count) && p.accepts_type(plugin_type_id))
+                                                                        .collect()
+                                                                };
+                                                                view! {
+                                                                    <div class="plugin-menu">
+                                                                        <For
+                                                                            each=each_plugins
+                                                                            key=|p| p.id.clone()
+                                                                            children=move |p| {
+                                                                                let pid = p.id.clone();
+                                                                                let name = p.name.clone();
+                                                                                let name_for_click = name.clone();
+                                                                                let desc = p.description.clone();
+                                                                                let on_run = on_run.clone();
+                                                                                let iid = iid.clone();
+                                                                                let trigger_warning = trigger_warning.clone();
+                                                                                let set_show = set_show.clone();
+                                                                                view! {
+                                                                                    <button class="plugin-item" title=desc on:click=move |_| {
+                                                                                        set_show.set(false);
+                                                                                        let pid_clone = pid.clone();
+                                                                                        let iid_clone = iid.clone();
+                                                                                        let name_clone = name_for_click.clone();
+                                                                                        let already_accepted = is_plugin_accepted(&pid_clone);
 
-                                                                            if already_accepted {
-                                                                                on_run.dispatch((pid_clone, iid_clone));
-                                                                            } else {
-                                                                                trigger_warning.set(Some((pid_clone, iid_clone, name_clone)));
+                                                                                        if already_accepted {
+                                                                                            on_run.dispatch((pid_clone, iid_clone));
+                                                                                        } else {
+                                                                                            trigger_warning.set(Some((pid_clone, iid_clone, name_clone)));
+                                                                                        }
+                                                                                    }>
+                                                                                        {name}
+                                                                                    </button>
+                                                                                }
                                                                             }
-                                                                        }>
-                                                                            {name}
-                                                                        </button>
-                                                                    }
-                                                                }
-                                                            />
-                                                        </div>
-                                                    }.into_any()
-                                                } else {
-                                                    ().into_any()
-                                                }
-                                            }
+                                                                        />
+                                                                    </div>
+                                                                }.into_any()
+                                                            } else {
+                                                                ().into_any()
+                                                            }
+                                                        }
+                                                    }
+                                                </div>
+                                            }.into_any()
+                                        } else {
+                                            ().into_any()
                                         }
-                                    </div>
-                                }.into_any()
-                            } else {
-                                ().into_any()
-                            }
-                        }
-                    }
-                </div>
-            </div>
+                                    }
+                                }
+                            </div>
+                        </div>
+                    }.into_any()
+                }
+            }}
         </div>
     }
 }
@@ -529,80 +591,171 @@ pub fn App() -> impl IntoView {
 
     // 1. Initial Load of History and Plugins
     Effect::new(move |_| {
-        spawn_local(async move {
-            let val = invoke("get_history", JsValue::UNDEFINED).await;
-            if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<UIClipboardItem>>(val) {
-                set_history.set(items);
-            }
-
-            let val = invoke("get_plugins", JsValue::UNDEFINED).await;
-            if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<PluginDefinition>>(val) {
-                set_plugins.set(items);
-            }
-        });
-    });
-
-    // 1b. Listen for window-shown events to refresh history
-    Effect::new(move |_| {
-        let closure = Closure::<dyn Fn(JsValue)>::new(move |_| {
+        if is_tauri() {
             spawn_local(async move {
                 let val = invoke("get_history", JsValue::UNDEFINED).await;
                 if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<UIClipboardItem>>(val) {
                     set_history.set(items);
                 }
+
+                let val = invoke("get_plugins", JsValue::UNDEFINED).await;
+                if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<PluginDefinition>>(val) {
+                    set_plugins.set(items);
+                }
             });
-        });
+        } else {
+            // Provide some mock history items when running in the browser so the user can preview the UI!
+            set_history.set(vec![
+                UIClipboardItem {
+                    id: "mock-1".to_string(),
+                    display_content: "Welcome to RustyBoard! This is a mock clipboard item for browser preview.".to_string(),
+                    content_type: "text".to_string(),
+                    sensitivity: Sensitivity::None,
+                    timestamp: 1718320000,
+                },
+                UIClipboardItem {
+                    id: "mock-2".to_string(),
+                    display_content: "admin@rustyboard.org".to_string(),
+                    content_type: "text".to_string(),
+                    sensitivity: Sensitivity::Personal,
+                    timestamp: 1718318000,
+                },
+                UIClipboardItem {
+                    id: "mock-3".to_string(),
+                    display_content: "•••••••• [Secret]".to_string(),
+                    content_type: "text".to_string(),
+                    sensitivity: Sensitivity::Secret,
+                    timestamp: 1718316000,
+                }
+            ]);
+        }
+    });
 
-        let handler = closure.as_ref().unchecked_ref::<js_sys::Function>().clone();
-        closure.forget();
+    // 1b. Listen for window-shown events to refresh history
+    Effect::new(move |_| {
+        if is_tauri() {
+            let closure = Closure::<dyn Fn(JsValue)>::new(move |_| {
+                spawn_local(async move {
+                    let val = invoke("get_history", JsValue::UNDEFINED).await;
+                    if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<UIClipboardItem>>(val) {
+                        set_history.set(items);
+                    }
+                });
+            });
 
-        spawn_local(async move {
-            listen("window-shown", &handler).await;
-        });
+            let handler = closure.as_ref().unchecked_ref::<js_sys::Function>().clone();
+            closure.forget();
+
+            spawn_local(async move {
+                listen("window-shown", &handler).await;
+            });
+        }
+    });
+
+    // 1c. Listen for history-synced events (periodic background cleanup sync)
+    Effect::new(move |_| {
+        if is_tauri() {
+            let set_history = set_history.clone();
+            let closure = Closure::<dyn Fn(JsValue)>::new(move |event_payload: JsValue| {
+                if let Ok(payload) = js_sys::Reflect::get(&event_payload, &JsValue::from_str("payload")) {
+                    if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<UIClipboardItem>>(payload) {
+                        set_history.set(items);
+                    }
+                }
+            });
+
+            let handler = closure.as_ref().unchecked_ref::<js_sys::Function>().clone();
+            closure.forget();
+
+            spawn_local(async move {
+                listen("history-synced", &handler).await;
+            });
+        }
     });
 
     // 2. Initial Load of persist_level configuration
     Effect::new(move |_| {
-        spawn_local(async move {
-            let val = invoke("get_persist_level", JsValue::UNDEFINED).await;
-            if let Some(s) = val.as_string() {
-                set_persist_level.set(s);
-            }
-        });
+        if is_tauri() {
+            spawn_local(async move {
+                let val = invoke("get_persist_level", JsValue::UNDEFINED).await;
+                if let Some(s) = val.as_string() {
+                    set_persist_level.set(s);
+                }
+            });
+        } else {
+            set_persist_level.set("Sensitive".to_string());
+        }
     });
 
     // 3. Listen for Real-Time Clipboard Events
     Effect::new(move |_| {
-        let set_history = set_history.clone();
-        let closure = Closure::<dyn Fn(JsValue)>::new(move |event_payload: JsValue| {
-            if let Ok(payload) = js_sys::Reflect::get(&event_payload, &JsValue::from_str("payload")) {
-                if let Ok(item) = serde_wasm_bindgen::from_value::<UIClipboardItem>(payload) {
-                    set_history.update(|h| {
-                        h.insert(0, item);
-                        if h.len() > 100 {
-                            h.pop();
-                        }
-                    });
+        if is_tauri() {
+            let set_history = set_history.clone();
+            let closure = Closure::<dyn Fn(JsValue)>::new(move |event_payload: JsValue| {
+                if let Ok(payload) = js_sys::Reflect::get(&event_payload, &JsValue::from_str("payload")) {
+                    if let Ok(item) = serde_wasm_bindgen::from_value::<UIClipboardItem>(payload) {
+                        set_history.update(|h| {
+                            h.insert(0, item);
+                            if h.len() > 100 {
+                                h.pop();
+                            }
+                        });
+                    }
                 }
-            }
-        });
+            });
 
-        let handler = closure.as_ref().unchecked_ref::<js_sys::Function>().clone();
-        closure.forget();
+            let handler = closure.as_ref().unchecked_ref::<js_sys::Function>().clone();
+            closure.forget();
 
-        spawn_local(async move {
-            listen("clipboard-changed", &handler).await;
-        });
+            spawn_local(async move {
+                listen("clipboard-changed", &handler).await;
+            });
+        }
     });
 
     // 4. Action to Copy back to OS Clipboard (thread-local since futures are not Send)
     let copy_item = Action::new_local(|id: &String| {
         let id = id.clone();
         async move {
-            let args = serde_wasm_bindgen::to_value(&CopyArgs { id }).unwrap();
-            invoke("copy_to_clipboard", args).await;
+            if is_tauri() {
+                let args = serde_wasm_bindgen::to_value(&CopyArgs { id }).unwrap();
+                invoke("copy_to_clipboard", args).await;
+            }
         }
     });
+
+    // 4c. Callback to Delete from History
+    let delete_item = Callback::new({
+        let set_history = set_history.clone();
+        move |id: String| {
+            // Optimistic: drop the item from the UI list right away so deletion
+            // feels instant and never waits on the backend.
+            set_history.update(|h| {
+                h.retain(|item| item.id != id);
+            });
+            // Fire the backend deletion in the background (memory + tray + async DB).
+            if is_tauri() {
+                spawn_local(async move {
+                    let args = serde_wasm_bindgen::to_value(&CopyArgs { id }).unwrap();
+                    let _ = invoke("delete_clipboard_item", args).await;
+                });
+            }
+        }
+    });
+
+    // 4d. Handler to Clear All History
+    let handle_clear_all = {
+        let set_history = set_history.clone();
+        move |_| {
+            let set_history = set_history.clone();
+            spawn_local(async move {
+                if is_tauri() {
+                    let _ = invoke("clear_all_history", JsValue::UNDEFINED).await;
+                }
+                set_history.set(Vec::new());
+            });
+        }
+    };
 
     // 4b. Action to Run Plugin
     let run_plugin = Action::new_local(move |args: &(String, String)| {
@@ -610,10 +763,14 @@ pub fn App() -> impl IntoView {
         let item_id = args.1.clone();
         async move {
             set_plugin_error.set(None);
-            let invoke_args = serde_wasm_bindgen::to_value(&RunPluginArgs { plugin_id, item_id }).unwrap();
-            if let Err(e) = invoke_catch("run_plugin", invoke_args).await {
-                let msg = e.as_string().unwrap_or_else(|| "Plugin execution failed.".to_string());
-                set_plugin_error.set(Some(msg));
+            if is_tauri() {
+                let invoke_args = serde_wasm_bindgen::to_value(&RunPluginArgs { plugin_id, item_id }).unwrap();
+                if let Err(e) = invoke_catch("run_plugin", invoke_args).await {
+                    let msg = e.as_string().unwrap_or_else(|| "Plugin execution failed.".to_string());
+                    set_plugin_error.set(Some(msg));
+                }
+            } else {
+                set_plugin_error.set(Some("Plugins are only available in the native desktop app.".to_string()));
             }
         }
     });
@@ -627,8 +784,10 @@ pub fn App() -> impl IntoView {
         } else {
             set_persist_level.set(value.clone());
             spawn_local(async move {
-                let args = serde_wasm_bindgen::to_value(&LevelArgs { value }).unwrap();
-                invoke("set_persist_level", args).await;
+                if is_tauri() {
+                    let args = serde_wasm_bindgen::to_value(&LevelArgs { value }).unwrap();
+                    invoke("set_persist_level", args).await;
+                }
             });
         }
     };
@@ -637,8 +796,10 @@ pub fn App() -> impl IntoView {
         set_show_confirm_modal.set(false);
         set_persist_level.set("All".to_string());
         spawn_local(async move {
-            let args = serde_wasm_bindgen::to_value(&LevelArgs { value: "All".to_string() }).unwrap();
-            invoke("set_persist_level", args).await;
+            if is_tauri() {
+                let args = serde_wasm_bindgen::to_value(&LevelArgs { value: "All".to_string() }).unwrap();
+                invoke("set_persist_level", args).await;
+            }
         });
     };
 
@@ -652,6 +813,17 @@ pub fn App() -> impl IntoView {
 
     view! {
         <main class="container">
+            {move || {
+                if !is_tauri() {
+                    view! {
+                        <div class="browser-warning-banner">
+                            "⚠️ Running in Browser Sandbox. Run " <code>"cargo tauri dev"</code> " to launch the native desktop app with clipboard syncing."
+                        </div>
+                    }.into_any()
+                } else {
+                    view! { <div style="display: none;"></div> }.into_any()
+                }
+            }}
             <header class="header">
                 <div class="logo-area">
                     <div class="logo-title-row">
@@ -695,6 +867,9 @@ pub fn App() -> impl IntoView {
                             <option value="All">"Unrestricted (Persist Secrets)"</option>
                         </select>
                     </label>
+                    <button class="btn-clear-all" on:click=handle_clear_all>
+                        "🗑️ Clear All"
+                    </button>
                     <div class="stats">
                         <span>"Active Clips: " {move || history.get().len()}</span>
                     </div>
@@ -716,9 +891,28 @@ pub fn App() -> impl IntoView {
                             <For
                                 each=move || history.get()
                                 key=|item| item.id.clone()
-                                children=move |item| {
-                                    view! {
-                                        <ClipboardCard item=item.clone() on_copy=copy_item plugins=plugins.into() on_run_plugin=run_plugin on_trigger_warning=set_pending_plugin_run />
+                                children={
+                                    let copy_item = copy_item.clone();
+                                    let run_plugin = run_plugin.clone();
+                                    let set_pending_plugin_run = set_pending_plugin_run.clone();
+                                    let delete_item = delete_item.clone();
+                                    let history = history.clone();
+                                    move |item| {
+                                        let item_id = item.id.clone();
+                                        let is_active = Signal::derive(move || {
+                                            history.get().first().map(|x| x.id.clone()) == Some(item_id.clone())
+                                        });
+                                        view! {
+                                            <ClipboardCard
+                                                item=item.clone()
+                                                on_copy=copy_item.clone()
+                                                plugins=plugins.into()
+                                                on_run_plugin=run_plugin.clone()
+                                                on_trigger_warning=set_pending_plugin_run.clone()
+                                                is_active=is_active
+                                                on_delete=delete_item.clone()
+                                            />
+                                        }
                                     }
                                 }
                             />

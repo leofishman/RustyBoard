@@ -84,8 +84,9 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 - [x] **Phase 9: Dynamic Tray History & Preview/Raw Switching** (Diodon-style tray menu items, click-to-copy from tray, card view toggling, and reload on focus).
 - [x] **Phase 10: External Plugin System** (Extensible CLI-based plugin system to run external tools on clipboard contents like Fabric AI).
 - [x] **Phase 11: Safety Modal & Stdin/Stdout Sync** (One-time safety warning dialog with "do not show again" preference, and writing plugin outputs directly to the system clipboard).
-- [ ] **Phase 12: Multi-Language Support (i18n)** (Zero-dependency lightweight localization for English, Spanish, and other languages).
-- [ ] **Phase 13: OS Malware Mitigation (Auto-Type)** (Keystroke simulation / virtual typing to enter clips directly into active input fields without using the system clipboard).
+- [ ] **Phase 12: Validate & Refine Deletion and "Clear All"** (Debug thread locking/main-thread scheduling of tray menu updates during history deletions and verify asynchronous database operations).
+- [ ] **Phase 13: Multi-Language Support (i18n)** (Zero-dependency lightweight localization for English, Spanish, and other languages).
+- [ ] **Phase 14: OS Malware Mitigation (Auto-Type)** (Keystroke simulation / virtual typing to enter clips directly into active input fields without using the system clipboard).
 
 
 ---

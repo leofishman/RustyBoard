@@ -37,7 +37,11 @@ Este archivo contiene la planificación paso a paso para construir el gestor de 
 - [x] **Pase seguro por Stdin**: Comunicar contenido sensible al proceso vía entrada estándar (`stdin`) previniendo inyección de comandos.
 - [x] **Sincronización al Portapapeles**: Copiar el resultado de la salida del plugin de forma automática al portapapeles del sistema operativo (`copy_item_by_id`).
 - [x] **Cartel de Advertencia (Warning Modal)**: Mostrar una advertencia de seguridad en inglés antes de ejecutar un plugin por primera vez, permitiendo recordar la decisión.
+- [ ] **Fix marmaid render**
 - [ ] **Soporte Multi-Idioma (i18n)**: Investigar e implementar soporte multi-idioma para la interfaz (traducción de advertencias, menús y botones).
 - [ ] **Mitigación de Malware del SO (Auto-Type)**: Implementar simulación de pulsaciones de teclado (virtual typing) para pegar texto directamente en la ventana activa sin escribirlo en el portapapeles.
+
+## 🧹 Fase 6: Depuración y Validación Final (Próxima Sesión)
+- [ ] **Validar y Refinar Borrado e Historial ("Clear All")**: Resolver los problemas de bloqueo de hilos/interfaz (thread locking) al reconstruir el menú del System Tray durante las eliminaciones, y refinar la visualización de los botones de borrado.
 
 

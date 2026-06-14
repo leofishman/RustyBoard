@@ -4,6 +4,7 @@ mod database;
 mod plugins;
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -16,12 +17,13 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ClipboardItem {
-    id: String,
-    raw_content: String,      // Intact original content (not sent to UI)
-    display_content: String,  // Sanitized content for UI display
-    content_type: String,     // "text" or "image"
-    sensitivity: security::Sensitivity,
-    timestamp: u64,
+    pub id: String,
+    pub raw_content: String,      // Intact original content (not sent to UI)
+    pub display_content: String,  // Sanitized content for UI display
+    pub content_type: String,     // "text" or "image"
+    pub sensitivity: security::Sensitivity,
+    pub timestamp: u64,
+    pub thumbnail: Option<String>,
 }
 
 // Representing the ClipboardItem structure sent to the UI
@@ -52,6 +54,10 @@ struct AppState {
     // Stores raw content of the last item written by the app itself
     // to prevent clipboard monitor feedback loops.
     last_written: Mutex<Option<String>>,
+    // True while a debounced tray-menu rebuild is already scheduled, so bursts
+    // of operations (e.g. deleting several items) coalesce into one rebuild
+    // instead of piling heavy work onto the GTK main thread.
+    tray_update_pending: AtomicBool,
 }
 
 #[tauri::command]
@@ -102,45 +108,85 @@ fn copy_item_by_id(app: &AppHandle, id: &str) -> Result<(), String> {
 }
 
 fn update_tray_menu(app: &AppHandle) -> Result<(), String> {
+    let app_handle = app.clone();
+    app.run_on_main_thread(move || {
+        if let Err(e) = update_tray_menu_impl(&app_handle) {
+            eprintln!("Error updating tray menu on main thread: {}", e);
+        }
+    }).map_err(|e| e.to_string())
+}
+
+// Debounced tray rebuild. Rebuilding the tray menu (decoding image thumbnails,
+// calling `set_menu`) runs on the GTK main thread, which also drives the
+// WebView; doing it synchronously on every operation can freeze the UI and
+// starve IPC when several happen in quick succession. This coalesces a burst
+// into a single rebuild shortly after the activity settles.
+fn schedule_tray_update(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let history = state.history.lock().map_err(|e| e.to_string())?;
+    // If a rebuild is already scheduled, let it cover this change too.
+    if state.tray_update_pending.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let state = app.state::<AppState>();
+        state.tray_update_pending.store(false, Ordering::SeqCst);
+        let _ = update_tray_menu(&app);
+    });
+}
+
+fn update_tray_menu_impl(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let history_items: Vec<ClipboardItem> = {
+        let history = state.history.lock().map_err(|e| e.to_string())?;
+        history.iter().take(15).cloned().collect()
+    };
     
     // Build menu
     let mut menu_builder = tauri::menu::MenuBuilder::new(app);
     
     // Add history items
-    if history.is_empty() {
+    if history_items.is_empty() {
         let empty_i = tauri::menu::MenuItem::with_id(app, "empty_placeholder", "(No clips yet)", false, None::<&str>).map_err(|e| e.to_string())?;
         menu_builder = menu_builder.item(&empty_i);
     } else {
-        for item in history.iter().take(15) { // Show top 15 items in tray menu
+        for item in history_items.iter() { // Show top 15 items in tray menu
             let mut label;
             let mut item_icon = None;
 
             if item.content_type == "image" {
-                // Decode metadata from base64 png
                 let base64_str = if item.display_content.starts_with("data:image/png;base64,") {
                     &item.display_content["data:image/png;base64,".len()..]
                 } else {
                     &item.raw_content
                 };
 
-                if let Ok(bytes) = BASE64.decode(base64_str) {
-                    let size_kb = bytes.len() as f64 / 1024.0;
-                    if let Ok(img) = image::load_from_memory(&bytes) {
-                        let w = img.width();
-                        let h = img.height();
-                        label = format!("[Image - {}x{}px - {:.1} KB]", w, h, size_kb);
-                        
-                        // Build a tiny thumbnail icon (18x18) for the tray menu
-                        let thumbnail = img.resize_exact(18, 18, image::imageops::FilterType::Lanczos3);
-                        let rgba_data = thumbnail.into_rgba8().into_raw();
-                        item_icon = Some(tauri::image::Image::new_owned(rgba_data, 18, 18));
-                    } else {
-                        label = format!("[Image - Unknown dimensions - {:.1} KB]", size_kb);
-                    }
+                let size_kb = if let Ok(bytes) = BASE64.decode(base64_str) {
+                    bytes.len() as f64 / 1024.0
                 } else {
-                    label = "[Image]".to_string();
+                    0.0
+                };
+                label = format!("[Image - {:.1} KB]", size_kb);
+
+                // Use pre-generated thumbnail if available
+                if let Some(ref thumb_b64) = item.thumbnail {
+                    if let Ok(rgba_data) = BASE64.decode(thumb_b64) {
+                        if rgba_data.len() == 18 * 18 * 4 {
+                            item_icon = Some(tauri::image::Image::new_owned(rgba_data, 18, 18));
+                        }
+                    }
+                }
+
+                // Fallback for older entries
+                if item_icon.is_none() {
+                    if let Ok(bytes) = BASE64.decode(base64_str) {
+                        if let Ok(img) = image::load_from_memory(&bytes) {
+                            let thumbnail = img.resize_exact(18, 18, image::imageops::FilterType::Lanczos3);
+                            let rgba_data = thumbnail.into_rgba8().into_raw();
+                            item_icon = Some(tauri::image::Image::new_owned(rgba_data, 18, 18));
+                        }
+                    }
                 }
             } else {
                 label = item.display_content.clone();
@@ -213,6 +259,52 @@ fn copy_to_clipboard(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn delete_clipboard_item(app: AppHandle, id: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    
+    // 1. Remove from in-memory history immediately
+    {
+        let mut history = state.history.lock().map_err(|e| e.to_string())?;
+        history.retain(|item| item.id != id);
+    }
+
+    // 2. Update tray menu (debounced so rapid deletes don't freeze the main thread)
+    schedule_tray_update(&app);
+
+    // 3. Spawn database removal asynchronously (non-blocking)
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        let _ = database::delete_item(&state.db_path, &id);
+    });
+    
+    Ok(())
+}
+
+#[tauri::command]
+async fn clear_all_history(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    
+    // 1. Clear in-memory history immediately
+    {
+        let mut history = state.history.lock().map_err(|e| e.to_string())?;
+        history.clear();
+    }
+
+    // 2. Update tray menu (debounced)
+    schedule_tray_update(&app);
+
+    // 3. Spawn database clear asynchronously (non-blocking)
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        let _ = database::clear_all(&state.db_path);
+    });
+    
+    Ok(())
+}
+
+#[tauri::command]
 fn get_shortcut(app: AppHandle) -> String {
     let config = config::load_config(&app);
     config.shortcut
@@ -280,6 +372,7 @@ fn run_plugin(app: AppHandle, plugin_id: String, item_id: String) -> Result<UICl
         content_type: "text".to_string(),
         sensitivity: response.sensitivity,
         timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+        thumbnail: None,
     };
 
     // Save item locally and in UI
@@ -348,6 +441,19 @@ fn encode_image_to_png(image_data: &arboard::ImageData<'_>) -> Result<String, St
     Ok(BASE64.encode(png_bytes))
 }
 
+fn generate_image_thumbnail(image_data: &arboard::ImageData<'_>) -> Option<String> {
+    use image::{ImageBuffer, Rgba};
+    let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_raw(
+        image_data.width as u32,
+        image_data.height as u32,
+        image_data.bytes.to_vec(),
+    )?;
+    
+    let resized = image::imageops::resize(&buffer, 18, 18, image::imageops::FilterType::Lanczos3);
+    let raw_bytes = resized.into_raw();
+    Some(BASE64.encode(raw_bytes))
+}
+
 struct ClipboardMonitor {
     app_handle: AppHandle,
     last_text: Mutex<String>,
@@ -390,6 +496,7 @@ impl ClipboardMonitor {
                     content_type: "text".to_string(),
                     sensitivity,
                     timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+                    thumbnail: None,
                 };
 
                 self.save_and_emit(state, new_item);
@@ -417,6 +524,7 @@ impl ClipboardMonitor {
                     let mut last_w = state.last_written.lock().unwrap();
                     *last_w = None;
                 } else {
+                    let thumbnail = generate_image_thumbnail(&image_data);
                     let new_item = ClipboardItem {
                         id: uuid::Uuid::new_v4().to_string(),
                         raw_content: png_base64.clone(),
@@ -424,6 +532,7 @@ impl ClipboardMonitor {
                         content_type: "image".to_string(),
                         sensitivity: security::Sensitivity::None,
                         timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+                        thumbnail,
                     };
 
                     self.save_and_emit(state, new_item);
@@ -523,13 +632,69 @@ impl ClipboardHandler for ClipboardMonitor {
 
               let app_state = AppState {
                   db_path,
-                  history: Mutex::new(loaded_history),
+              history: Mutex::new(loaded_history),
                   last_written: Mutex::new(None),
+                  tray_update_pending: AtomicBool::new(false),
               };
               app.manage(app_state);
 
               // 4. Start Clipboard Monitor
               start_clipboard_monitor(handle.clone());
+
+              // 4b. Start Periodic Cleanup Loop (every 60 seconds)
+              let periodic_handle = handle.clone();
+              tauri::async_runtime::spawn(async move {
+                  let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+                  loop {
+                      interval.tick().await;
+                      if let Some(state) = periodic_handle.try_state::<AppState>() {
+                          let config = config::load_config(&periodic_handle);
+                          
+                          // In Unrestricted mode, do not run cleanup at all
+                          if config.persist_level == config::PersistLevel::All {
+                              continue;
+                          }
+
+                          let now = std::time::SystemTime::now()
+                              .duration_since(std::time::UNIX_EPOCH)
+                              .map(|d| d.as_secs())
+                              .unwrap_or(0);
+                          let cutoff = now - 7200; // 2 hours in seconds
+                          
+                          let mut changed = false;
+                          if let Ok(mut history) = state.history.lock() {
+                              let before_len = history.len();
+                              history.retain(|item| {
+                                  match config.persist_level {
+                                      config::PersistLevel::None => {
+                                          // Paranoid mode: delete Personal, Credential, Secret
+                                          !(item.sensitivity != security::Sensitivity::None && item.timestamp < cutoff)
+                                      }
+                                      config::PersistLevel::Sensitive => {
+                                          // Balanced mode: delete Credential, Secret
+                                          !(matches!(item.sensitivity, security::Sensitivity::Credential | security::Sensitivity::Secret) && item.timestamp < cutoff)
+                                      }
+                                      config::PersistLevel::All => true,
+                                  }
+                              });
+                              if history.len() != before_len {
+                                  changed = true;
+                              }
+                          }
+                          
+                          // Run DB cleanup only if not in Unrestricted mode
+                          let _ = database::run_cleanup(&state.db_path);
+                          
+                          if changed {
+                              let _ = update_tray_menu(&periodic_handle);
+                              if let Ok(history) = state.history.lock() {
+                                  let ui_history: Vec<UIClipboardItem> = history.iter().map(|item| item.clone().into()).collect();
+                                  let _ = periodic_handle.emit("history-synced", ui_history);
+                              }
+                          }
+                      }
+                  }
+              });
 
               // 5. Initialize Global Shortcut Plugin with window toggle handler
               let global_shortcut_plugin = tauri_plugin_global_shortcut::Builder::new()
@@ -621,6 +786,8 @@ impl ClipboardHandler for ClipboardMonitor {
           .invoke_handler(tauri::generate_handler![
               get_history,
               copy_to_clipboard,
+              delete_clipboard_item,
+              clear_all_history,
               get_shortcut,
               set_shortcut,
               get_persist_level,
