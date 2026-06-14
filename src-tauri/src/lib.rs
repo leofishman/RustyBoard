@@ -253,6 +253,9 @@ fn run_plugin(app: AppHandle, plugin_id: String, item_id: String) -> Result<UICl
     let _ = app.emit("clipboard-changed", ui_item.clone());
     let _ = update_tray_menu(&app);
 
+    // Copy the output of the plugin to the system clipboard
+    let _ = copy_item_by_id(&app, &new_item.id);
+
     Ok(ui_item)
 }
 

@@ -76,8 +76,11 @@ pub fn execute_plugin(app: &AppHandle, plugin_id: &str, input_text: &str) -> Res
     let plugin = plugins.into_iter().find(|p| p.id == plugin_id)
         .ok_or_else(|| format!("Plugin {} not found", plugin_id))?;
 
+    let dir = get_plugins_dir(app);
+
     let mut child = Command::new(&plugin.command)
         .args(&plugin.args)
+        .current_dir(&dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

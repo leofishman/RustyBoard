@@ -9,8 +9,13 @@
   /* Colors */
   --bg-primary: #0a0d14;
   --bg-secondary: #121724;
+  --bg-tertiary: #1b2234;
   --bg-card: rgba(18, 23, 36, 0.7);
   --border-color: rgba(255, 255, 255, 0.08);
+
+  /* Border Radii */
+  --radius-md: 8px;
+  --radius-sm: 4px;
   
   --text-primary: #f1f5f9;
   --text-secondary: #94a3b8;
