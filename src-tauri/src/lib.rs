@@ -249,12 +249,13 @@ fn run_plugin(app: AppHandle, plugin_id: String, item_id: String) -> Result<UICl
     let _ = database::save_item(&state.db_path, &new_item, config.persist_level);
     let _ = database::run_cleanup(&state.db_path);
 
+    let new_item_id = new_item.id.clone();
     let ui_item: UIClipboardItem = new_item.into();
     let _ = app.emit("clipboard-changed", ui_item.clone());
     let _ = update_tray_menu(&app);
 
     // Copy the output of the plugin to the system clipboard
-    let _ = copy_item_by_id(&app, &new_item.id);
+    let _ = copy_item_by_id(&app, &new_item_id);
 
     Ok(ui_item)
 }
