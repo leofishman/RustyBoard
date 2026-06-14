@@ -1,0 +1,8 @@
+{
+  "id": "prettify-json",
+  "name": "Prettify JSON",
+  "description": "Pretty-prints the copied JSON using Python's standard library",
+  "command": "python3",
+  "args": ["-m", "json.tool"],
+  "applies_to": ["json"]
+}

@@ -9,8 +9,13 @@
   /* Colors */
   --bg-primary: #0a0d14;
   --bg-secondary: #121724;
+  --bg-tertiary: #1b2234;
   --bg-card: rgba(18, 23, 36, 0.7);
   --border-color: rgba(255, 255, 255, 0.08);
+
+  /* Border Radii */
+  --radius-md: 8px;
+  --radius-sm: 4px;
   
   --text-primary: #f1f5f9;
   --text-secondary: #94a3b8;
@@ -298,6 +303,53 @@ body {
   gap: 0.6rem;
 }
 
+/* Plugin Dropdown */
+.plugin-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.plugin-menu {
+    position: absolute;
+    bottom: 100%;
+    right: 0;
+    margin-bottom: 0.5rem;
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 0.25rem;
+    display: flex;
+    flex-direction: column;
+    min-width: 150px;
+    z-index: 100;
+    box-shadow: 0 -4px 12px rgba(0,0,0,0.3);
+}
+
+.plugin-item {
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    padding: 0.5rem 1rem;
+    text-align: left;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    transition: background-color 0.2s ease;
+}
+
+.plugin-item:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.btn-tertiary {
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+.btn-tertiary:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
 /* Buttons */
 .btn {
   font-size: 0.8rem;
@@ -527,6 +579,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 1.2rem;
+  max-height: 90vh;
+  overflow-y: auto;
   animation: scaleIn 0.2s ease;
 }
 
@@ -591,6 +645,67 @@ body {
 @keyframes scaleIn {
   from { transform: scale(0.95); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
+}
+
+.modal-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-top: 0.8rem;
+}
+
+.modal-checkbox-label input {
+  cursor: pointer;
+  accent-color: var(--accent-red);
+}
+
+/* Plugin error toast */
+.error-toast {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  max-width: 80%;
+  padding: 0.75rem 1rem;
+  background-color: rgba(127, 29, 29, 0.95);
+  border: 1px solid var(--accent-red);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  z-index: 200;
+}
+
+.error-toast-icon {
+  flex-shrink: 0;
+}
+
+.error-toast-msg {
+  flex: 1;
+  word-break: break-word;
+  max-height: 6rem;
+  overflow-y: auto;
+}
+
+.error-toast-close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0 0.25rem;
+  opacity: 0.7;
+}
+
+.error-toast-close:hover {
+  opacity: 1;
 }
 
 

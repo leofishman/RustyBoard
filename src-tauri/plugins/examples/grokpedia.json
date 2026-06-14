@@ -1,0 +1,9 @@
+{
+  "id": "ts-grokpedia",
+  "name": "Search Grokipedia",
+  "description": "Searches Grokipedia for the copied term using a TypeScript plugin",
+  "command": "bun",
+  "args": ["run", "grokpedia.ts"],
+  "max_words": 4,
+  "max_chars": 60
+}

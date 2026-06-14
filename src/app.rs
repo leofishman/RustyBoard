@@ -10,11 +10,21 @@ extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
     async fn invoke(cmd: &str, args: JsValue) -> JsValue;
 
+    // Same as `invoke`, but surfaces a rejected command (Err) as `Err(JsValue)`.
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"], js_name = invoke, catch)]
+    async fn invoke_catch(cmd: &str, args: JsValue) -> Result<JsValue, JsValue>;
+
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"])]
     async fn listen(event: &str, handler: &js_sys::Function) -> JsValue;
 
     #[wasm_bindgen(js_name = renderMermaid)]
     fn render_mermaid(element_id: &str, code: &str);
+
+    #[wasm_bindgen(js_namespace = localStorage, js_name = getItem)]
+    fn get_storage_item(key: &str) -> Option<String>;
+
+    #[wasm_bindgen(js_namespace = localStorage, js_name = setItem)]
+    fn set_storage_item(key: &str, value: &str);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -37,6 +47,92 @@ pub struct UIClipboardItem {
 #[derive(Serialize)]
 struct CopyArgs {
     id: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
+pub struct PluginDefinition {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub max_chars: Option<usize>,
+    #[serde(default)]
+    pub max_words: Option<usize>,
+    #[serde(default)]
+    pub applies_to: Option<Vec<String>>,
+}
+
+/// Stable lowercase id for a detected content type, used to match a plugin's
+/// `applies_to` list against the type of the current clipboard item.
+fn detected_type_id(dt: DetectedType) -> &'static str {
+    match dt {
+        DetectedType::Text => "text",
+        DetectedType::Svg => "svg",
+        DetectedType::Url => "url",
+        DetectedType::Json => "json",
+        DetectedType::Mermaid => "mermaid",
+        DetectedType::Markdown => "markdown",
+    }
+}
+
+impl PluginDefinition {
+    /// Whether this plugin should be offered for an item with the given text size.
+    fn accepts(&self, char_count: usize, word_count: usize) -> bool {
+        if let Some(max) = self.max_chars {
+            if char_count > max {
+                return false;
+            }
+        }
+        if let Some(max) = self.max_words {
+            if word_count > max {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Whether this plugin applies to the given detected content type.
+    /// An unset `applies_to` means it applies to any text item.
+    fn accepts_type(&self, type_id: &str) -> bool {
+        match &self.applies_to {
+            None => true,
+            Some(types) => types.iter().any(|t| t.eq_ignore_ascii_case(type_id)),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RunPluginArgs {
+    plugin_id: String,
+    item_id: String,
+}
+
+const ACCEPTED_PLUGINS_KEY: &str = "rustyboard_accepted_plugins";
+
+/// Whether the user has previously trusted this specific plugin (by id).
+/// Trust is intentionally per-plugin, so accepting one plugin never silences
+/// the warning for a different (possibly malicious) plugin added later.
+fn is_plugin_accepted(plugin_id: &str) -> bool {
+    get_storage_item(ACCEPTED_PLUGINS_KEY)
+        .map(|val| val.split('\n').any(|id| id == plugin_id))
+        .unwrap_or(false)
+}
+
+/// Persist trust for a single plugin id.
+fn accept_plugin(plugin_id: &str) {
+    let mut accepted: Vec<String> = get_storage_item(ACCEPTED_PLUGINS_KEY)
+        .map(|val| {
+            val.split('\n')
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+    if !accepted.iter().any(|id| id == plugin_id) {
+        accepted.push(plugin_id.to_string());
+        set_storage_item(ACCEPTED_PLUGINS_KEY, &accepted.join("\n"));
+    }
 }
 
 fn set_timeout<F: FnOnce() + 'static>(f: F, ms: i32) {
@@ -87,15 +183,26 @@ fn render_markdown(md: &str) -> String {
 }
 
 #[component]
-fn ClipboardCard(item: UIClipboardItem, on_copy: Action<String, (), LocalStorage>) -> impl IntoView {
+fn ClipboardCard(
+    item: UIClipboardItem,
+    on_copy: Action<String, (), LocalStorage>,
+    plugins: Signal<Vec<PluginDefinition>>,
+    on_run_plugin: Action<(String, String), (), LocalStorage>,
+    on_trigger_warning: WriteSignal<Option<(String, String, String)>>,
+) -> impl IntoView {
     let (revealed, set_revealed) = signal(false);
     let (copied_indicator, set_copied_indicator) = signal(false);
     let (view_raw, set_view_raw) = signal(false);
+    let (show_plugins, set_show_plugins) = signal(false);
 
     let id = item.id.clone();
+    let id_mermaid = item.id.clone();
+    let id_plugin = item.id.clone();
     let content_type = item.content_type.clone();
     let display_content = item.display_content.clone();
     let sensitivity = item.sensitivity;
+
+
 
     let detected_type = if content_type == "text" {
         classify_text(&display_content)
@@ -127,6 +234,16 @@ fn ClipboardCard(item: UIClipboardItem, on_copy: Action<String, (), LocalStorage
     let dt_body = detected_type;
     let dc_body = display_content.clone();
     let ct_footer = content_type.clone();
+    let ct_plugin = content_type.clone();
+
+    // Text size and detected type of this item, used to decide which plugins apply.
+    let plugin_char_count = display_content.chars().count();
+    let plugin_word_count = display_content.split_whitespace().count();
+    let plugin_type_id = if content_type == "text" {
+        detected_type_id(detected_type)
+    } else {
+        "image"
+    };
 
     view! {
         <div class=move || {
@@ -239,7 +356,7 @@ fn ClipboardCard(item: UIClipboardItem, on_copy: Action<String, (), LocalStorage
                                 }.into_any()
                             }
                             DetectedType::Mermaid => {
-                                let el_id = format!("mermaid-{}", id);
+                                let el_id = format!("mermaid-{}", id_mermaid);
                                 let code = if dc_body.starts_with("```mermaid") && dc_body.ends_with("```") {
                                     let lines: Vec<&str> = dc_body.lines().collect();
                                     if lines.len() >= 3 {
@@ -304,6 +421,91 @@ fn ClipboardCard(item: UIClipboardItem, on_copy: Action<String, (), LocalStorage
                     <button class="btn btn-primary" on:click=handle_copy>
                         {move || if copied_indicator.get() { "✓ Copied!" } else { "📋 Copy" }}
                     </button>
+
+                    {
+                        let ct_plugin_clone = ct_plugin.clone();
+                        let on_run = on_run_plugin.clone();
+                        let iid = id_plugin.clone();
+                        let trigger_warning = on_trigger_warning.clone();
+                        let set_show = set_show_plugins.clone();
+                        move || {
+                            let applicable: Vec<PluginDefinition> = plugins.get()
+                                .into_iter()
+                                .filter(|p| p.accepts(plugin_char_count, plugin_word_count) && p.accepts_type(plugin_type_id))
+                                .collect();
+                            if ct_plugin_clone == "text" && !applicable.is_empty() {
+                                let on_run = on_run.clone();
+                                let iid = iid.clone();
+                                let trigger_warning = trigger_warning.clone();
+                                let set_show = set_show.clone();
+                                view! {
+                                    <div class="plugin-dropdown">
+                                        <button class="btn btn-tertiary" on:click=move |_| set_show.update(|s| *s = !*s)>
+                                            "🔌 Plugins"
+                                        </button>
+                                        {
+                                            let on_run = on_run.clone();
+                                            let iid = iid.clone();
+                                            let trigger_warning = trigger_warning.clone();
+                                            let set_show = set_show.clone();
+                                            move || {
+                                                if show_plugins.get() {
+                                                    let on_run = on_run.clone();
+                                                    let iid = iid.clone();
+                                                    let trigger_warning = trigger_warning.clone();
+                                                    let set_show = set_show.clone();
+                                                    let each_plugins = move || -> Vec<PluginDefinition> {
+                                                        plugins.get().into_iter()
+                                                            .filter(|p| p.accepts(plugin_char_count, plugin_word_count) && p.accepts_type(plugin_type_id))
+                                                            .collect()
+                                                    };
+                                                    view! {
+                                                        <div class="plugin-menu">
+                                                            <For
+                                                                each=each_plugins
+                                                                key=|p| p.id.clone()
+                                                                children=move |p| {
+                                                                    let pid = p.id.clone();
+                                                                    let name = p.name.clone();
+                                                                    let name_for_click = name.clone();
+                                                                    let desc = p.description.clone();
+                                                                    let on_run = on_run.clone();
+                                                                    let iid = iid.clone();
+                                                                    let trigger_warning = trigger_warning.clone();
+                                                                    let set_show = set_show.clone();
+                                                                    view! {
+                                                                        <button class="plugin-item" title=desc on:click=move |_| {
+                                                                            set_show.set(false);
+                                                                            let pid_clone = pid.clone();
+                                                                            let iid_clone = iid.clone();
+                                                                            let name_clone = name_for_click.clone();
+                                                                            let already_accepted = is_plugin_accepted(&pid_clone);
+
+                                                                            if already_accepted {
+                                                                                on_run.dispatch((pid_clone, iid_clone));
+                                                                            } else {
+                                                                                trigger_warning.set(Some((pid_clone, iid_clone, name_clone)));
+                                                                            }
+                                                                        }>
+                                                                            {name}
+                                                                        </button>
+                                                                    }
+                                                                }
+                                                            />
+                                                        </div>
+                                                    }.into_any()
+                                                } else {
+                                                    ().into_any()
+                                                }
+                                            }
+                                        }
+                                    </div>
+                                }.into_any()
+                            } else {
+                                ().into_any()
+                            }
+                        }
+                    }
                 </div>
             </div>
         </div>
@@ -320,13 +522,22 @@ pub fn App() -> impl IntoView {
     let (history, set_history) = signal(Vec::<UIClipboardItem>::new());
     let (persist_level, set_persist_level) = signal("None".to_string());
     let (show_confirm_modal, set_show_confirm_modal) = signal(false);
+    let (plugins, set_plugins) = signal(Vec::<PluginDefinition>::new());
+    let (plugin_error, set_plugin_error) = signal(None::<String>);
+    let (pending_plugin_run, set_pending_plugin_run) = signal(None::<(String, String, String)>); // (plugin_id, item_id, plugin_name)
+    let (dont_show_again, set_dont_show_again) = signal(false);
 
-    // 1. Initial Load of History
+    // 1. Initial Load of History and Plugins
     Effect::new(move |_| {
         spawn_local(async move {
             let val = invoke("get_history", JsValue::UNDEFINED).await;
             if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<UIClipboardItem>>(val) {
                 set_history.set(items);
+            }
+
+            let val = invoke("get_plugins", JsValue::UNDEFINED).await;
+            if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<PluginDefinition>>(val) {
+                set_plugins.set(items);
             }
         });
     });
@@ -390,6 +601,20 @@ pub fn App() -> impl IntoView {
         async move {
             let args = serde_wasm_bindgen::to_value(&CopyArgs { id }).unwrap();
             invoke("copy_to_clipboard", args).await;
+        }
+    });
+
+    // 4b. Action to Run Plugin
+    let run_plugin = Action::new_local(move |args: &(String, String)| {
+        let plugin_id = args.0.clone();
+        let item_id = args.1.clone();
+        async move {
+            set_plugin_error.set(None);
+            let invoke_args = serde_wasm_bindgen::to_value(&RunPluginArgs { plugin_id, item_id }).unwrap();
+            if let Err(e) = invoke_catch("run_plugin", invoke_args).await {
+                let msg = e.as_string().unwrap_or_else(|| "Plugin execution failed.".to_string());
+                set_plugin_error.set(Some(msg));
+            }
         }
     });
 
@@ -463,7 +688,7 @@ pub fn App() -> impl IntoView {
                                 key=|item| item.id.clone()
                                 children=move |item| {
                                     view! {
-                                        <ClipboardCard item=item.clone() on_copy=copy_item />
+                                        <ClipboardCard item=item.clone() on_copy=copy_item plugins=plugins.into() on_run_plugin=run_plugin on_trigger_warning=set_pending_plugin_run />
                                     }
                                 }
                             />
@@ -471,6 +696,85 @@ pub fn App() -> impl IntoView {
                     }
                 }}
             </div>
+
+            {move || {
+                if let Some(err) = plugin_error.get() {
+                    view! {
+                        <div class="error-toast">
+                            <span class="error-toast-icon">"⛔"</span>
+                            <span class="error-toast-msg">{err}</span>
+                            <button
+                                class="error-toast-close"
+                                on:click=move |_| set_plugin_error.set(None)
+                            >
+                                "✕"
+                            </button>
+                        </div>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }
+            }}
+
+            {
+                let on_run = run_plugin.clone();
+                let set_pending = set_pending_plugin_run.clone();
+                let dont_show = dont_show_again.clone();
+                move || {
+                    if let Some((pid, iid, name)) = pending_plugin_run.get() {
+                        let on_run = on_run.clone();
+                        let set_pending = set_pending.clone();
+                        let dont_show = dont_show.clone();
+                        let pid_clone = pid.clone();
+                        let iid_clone = iid.clone();
+                        view! {
+                            <div class="modal-overlay">
+                                <div class="modal-card">
+                                    <div class="modal-header">
+                                        <span class="warning-icon">"⚠️"</span>
+                                        <h2>"Security Warning: External Plugin"</h2>
+                                    </div>
+                                    <div class="modal-body">
+                                        <p>"You are about to execute an external command/script on your system via: " <strong>{name}</strong></p>
+                                        <div class="modal-alert">
+                                            "Plugins run with your user privileges and can access files, network resources, and execute system commands. "
+                                            "Ensure that you trust the plugin configuration and script before executing it."
+                                        </div>
+                                        <label class="modal-checkbox-label">
+                                            <input
+                                                type="checkbox"
+                                                prop:checked=dont_show
+                                                on:change=move |ev| set_dont_show_again.set(event_target_checked(&ev))
+                                            />
+                                            " Trust this plugin and don't warn me again for it"
+                                        </label>
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button class="btn btn-secondary" on:click=move |_| {
+                                            set_pending.set(None);
+                                            set_dont_show_again.set(false);
+                                        }>
+                                            "Cancel"
+                                        </button>
+                                        <button class="btn btn-danger" on:click=move |_| {
+                                            if dont_show.get() {
+                                                accept_plugin(&pid_clone);
+                                            }
+                                            on_run.dispatch((pid_clone.clone(), iid_clone.clone()));
+                                            set_pending.set(None);
+                                            set_dont_show_again.set(false);
+                                        }>
+                                            "Run Plugin"
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        }.into_any()
+                    } else {
+                        ().into_any()
+                    }
+                }
+            }
 
             {move || {
                 if show_confirm_modal.get() {

@@ -1,0 +1,9 @@
+{
+  "id": "bash-dictionary",
+  "name": "Look up in Dictionary",
+  "description": "Fetches the definition of the copied word",
+  "command": "bash",
+  "args": ["dictionary.sh"],
+  "max_words": 1,
+  "max_chars": 40
+}

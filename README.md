@@ -82,4 +82,86 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 - [x] **Phase 7: Markdown & Mermaid Rendering** (Safe native Markdown compilation, dynamic inline Mermaid vector diagrams).
 - [x] **Phase 8: Persistence & System Tray** (System tray daemon mode, window-close interception to tray, and warning modal for advanced persistence).
 - [x] **Phase 9: Dynamic Tray History & Preview/Raw Switching** (Diodon-style tray menu items, click-to-copy from tray, card view toggling, and reload on focus).
+- [x] **Phase 10: External Plugin System** (Extensible CLI-based plugin system to run external tools on clipboard contents like Fabric AI).
+- [x] **Phase 11: Safety Modal & Stdin/Stdout Sync** (One-time safety warning dialog with "do not show again" preference, and writing plugin outputs directly to the system clipboard).
+- [ ] **Phase 12: Multi-Language Support (i18n)** (Zero-dependency lightweight localization for English, Spanish, and other languages).
+- [ ] **Phase 13: OS Malware Mitigation (Auto-Type)** (Keystroke simulation / virtual typing to enter clips directly into active input fields without using the system clipboard).
+
+
+---
+
+## 🔌 Plugins
+
+RustyBoard supports an extensible plugin system that allows the community to build custom commands using external CLI tools.
+Plugins are defined using simple `.json` files placed in the `plugins/` directory within your app's configuration folder (e.g. `~/.config/rustyboard/plugins/`).
+
+RustyBoard ships **with no plugins enabled by default** — we keep the app lightweight and let you opt into extending it. On first launch only a single `uppercase.json` sample is written to your config folder; everything under `src-tauri/plugins/` in this repository is **reference documentation**, not installed automatically. To use one, copy its `.json` (and any script it references) into your config `plugins/` directory yourself.
+
+### How It Works
+
+When a plugin is invoked, RustyBoard takes the *raw text content* of the clipboard item and pipes it directly into the `stdin` of the defined command. The `stdout` of that command is then safely captured, sanitized, and injected back into RustyBoard as a brand new clipboard entry!
+
+#### Input constraints (optional)
+
+A plugin can declare what kind of input it can sensibly handle, and RustyBoard will only offer it for clipboard items that match. This keeps, for example, a single-word dictionary lookup or a short search from showing up when you've copied an entire document, and lets a JSON formatter appear only for JSON:
+
+```json
+{
+  "id": "ts-grokpedia",
+  "name": "Search Grokipedia",
+  "command": "bun",
+  "args": ["run", "grokpedia.ts"],
+  "max_words": 4,
+  "max_chars": 60
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `max_chars` | Hide the plugin when the item has more characters than this. |
+| `max_words` | Hide the plugin when the item has more whitespace-separated words than this. |
+| `applies_to` | List of detected content types the plugin applies to. Valid values: `text`, `url`, `json`, `svg`, `mermaid`, `markdown`. |
+
+All three fields are optional; omit them and the plugin is offered for any text item. Plugins currently operate on text only — image support is planned but not yet wired into the execution path.
+
+```json
+{
+  "id": "prettify-json",
+  "name": "Prettify JSON",
+  "command": "python3",
+  "args": ["-m", "json.tool"],
+  "applies_to": ["json"]
+}
+```
+
+### Example: Fabric AI Integration
+
+You can easily integrate external AI workflows, like [Fabric](https://github.com/danielmiessler/fabric), by creating a `fabric-summary.json` file in the plugins folder:
+
+```json
+{
+  "id": "fabric-summary",
+  "name": "Summarize with Fabric AI",
+  "description": "Uses Fabric AI to summarize the copied text",
+  "command": "fabric",
+  "args": ["-p", "summarize"]
+}
+```
+
+Now, any text you copy can be summarized with a single click from the UI! The community is encouraged to create and share their own custom `.json` plugins.
+
+### 🔒 Safety & Clipboard Synchronization
+
+- **Safety Warning Modal**: To protect against accidental execution of unvetted local binaries, RustyBoard shows a warning modal in English the first time you execute a given plugin. Trust is granted **per plugin** — checking "Trust this plugin and don't warn me again for it" only silences the warning for that specific plugin, so a different (or newly added) plugin will still prompt you. Choices persist in local storage.
+- **Execution Timeout**: Each plugin process is given a hard 30-second limit; if it hangs (e.g. waiting on the network) it is terminated and the error is surfaced in the UI.
+- **Error Reporting**: If a plugin fails or exits non-zero, its `stderr` is shown in a dismissible toast instead of failing silently.
+- **System Clipboard Integration**: The text output of any executed plugin is automatically written back to your OS clipboard, making it instantly available for paste actions anywhere.
+
+### Example Plugins included
+
+We have included some fully commented, **working** examples inside the `src-tauri/plugins/examples` folder to help you get started. They all hit real APIs and need no extra dependencies beyond their runtime:
+1. `translator.py`: A Python script (standard library only) that translates the clipboard content via Google's public `gtx` endpoint, auto-detecting the source language. Target language defaults to English and can be overridden, e.g. `"args": ["translator.py", "es"]`.
+2. `dictionary.sh`: A Bash script that takes a single word and fetches its definition from the free Dictionary API, formatting it as Markdown using `jq` or `python3` (whichever is available).
+3. `grokpedia.ts`: A TypeScript plugin that runs a **real search against [Grokipedia](https://grokipedia.com)** and returns the top results as Markdown with links. Run it with `bun run grokpedia.ts` (or `npx tsx grokpedia.ts` on Node.js ≥ 18).
+4. `prettify-json.json`: A script-less plugin (just a config) that pretty-prints copied JSON via `python3 -m json.tool`. It uses `applies_to: ["json"]`, so it only appears for JSON items.
 

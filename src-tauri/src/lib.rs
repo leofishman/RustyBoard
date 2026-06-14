@@ -1,6 +1,7 @@
 mod security;
 mod config;
 mod database;
+mod plugins;
 
 use std::sync::Mutex;
 use std::thread;
@@ -201,6 +202,65 @@ fn set_shortcut(app: AppHandle, shortcut_str: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_plugins(app: AppHandle) -> Result<Vec<plugins::PluginDefinition>, String> {
+    plugins::load_plugins(&app)
+}
+
+#[tauri::command]
+fn run_plugin(app: AppHandle, plugin_id: String, item_id: String) -> Result<UIClipboardItem, String> {
+    let state = app.state::<AppState>();
+
+    let (raw_content, content_type) = {
+        let history = state.history.lock().map_err(|e| e.to_string())?;
+        let item = history.iter().find(|x| x.id == item_id)
+            .ok_or_else(|| "Item not found".to_string())?;
+        (item.raw_content.clone(), item.content_type.clone())
+    };
+
+    if content_type != "text" {
+        return Err("Plugins only support text content currently.".to_string());
+    }
+
+    let response = plugins::execute_plugin(&app, &plugin_id, &raw_content)?;
+
+    if !response.success {
+        return Err(response.error.unwrap_or_else(|| "Unknown plugin error".to_string()));
+    }
+
+    let new_item = ClipboardItem {
+        id: uuid::Uuid::new_v4().to_string(),
+        raw_content: response.result_raw_content,
+        display_content: response.result_display_content,
+        content_type: "text".to_string(),
+        sensitivity: response.sensitivity,
+        timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+    };
+
+    // Save item locally and in UI
+    {
+        let mut history = state.history.lock().unwrap();
+        history.insert(0, new_item.clone());
+        if history.len() > 100 {
+            history.pop();
+        }
+    }
+
+    let config = config::load_config(&app);
+    let _ = database::save_item(&state.db_path, &new_item, config.persist_level);
+    let _ = database::run_cleanup(&state.db_path);
+
+    let new_item_id = new_item.id.clone();
+    let ui_item: UIClipboardItem = new_item.into();
+    let _ = app.emit("clipboard-changed", ui_item.clone());
+    let _ = update_tray_menu(&app);
+
+    // Copy the output of the plugin to the system clipboard
+    let _ = copy_item_by_id(&app, &new_item_id);
+
+    Ok(ui_item)
+}
+
+#[tauri::command]
 fn get_persist_level(app: AppHandle) -> String {
     let config = config::load_config(&app);
     format!("{:?}", config.persist_level)
@@ -248,9 +308,106 @@ struct ClipboardMonitor {
     last_image_hash: Mutex<Option<u64>>,
 }
 
+impl ClipboardMonitor {
+    fn process_text(&mut self, state: &State<'_, AppState>, text: String) {
+        let trimmed = text.trim();
+        let mut last_t = self.last_text.lock().unwrap();
+        if !trimmed.is_empty() && text != *last_t {
+            let is_own_write = {
+                let last_w = state.last_written.lock().unwrap();
+                last_w.as_ref() == Some(&text)
+            };
+
+            *last_t = text.clone();
+            let mut last_img = self.last_image_hash.lock().unwrap();
+            *last_img = None; // Reset image comparator
+
+            if is_own_write {
+                // Clean loop flag
+                let mut last_w = state.last_written.lock().unwrap();
+                *last_w = None;
+            } else {
+                // Process text
+                let (display_content, sensitivity) = if trimmed.starts_with("<svg") && trimmed.ends_with("</svg>") {
+                    match security::sanitize_svg(&text) {
+                        Ok(clean) => (clean, security::Sensitivity::None),
+                        Err(_) => (security::sanitize_text(&text), security::classify_sensitivity(&text)),
+                    }
+                } else {
+                    (security::sanitize_text(&text), security::classify_sensitivity(&text))
+                };
+
+                let new_item = ClipboardItem {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    raw_content: text.clone(),
+                    display_content,
+                    content_type: "text".to_string(),
+                    sensitivity,
+                    timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+                };
+
+                self.save_and_emit(state, new_item);
+            }
+        }
+    }
+
+    fn process_image(&mut self, state: &State<'_, AppState>, image_data: arboard::ImageData) {
+        let bytes = &*image_data.bytes;
+        let image_hash = calculate_hash(&bytes);
+
+        let mut last_img = self.last_image_hash.lock().unwrap();
+        if Some(image_hash) != *last_img {
+            let mut last_t = self.last_text.lock().unwrap();
+            *last_t = String::new(); // Reset text comparator
+            *last_img = Some(image_hash);
+
+            if let Ok(png_base64) = encode_image_to_png(&image_data) {
+                let is_own_write = {
+                    let last_w = state.last_written.lock().unwrap();
+                    last_w.as_ref() == Some(&png_base64)
+                };
+
+                if is_own_write {
+                    let mut last_w = state.last_written.lock().unwrap();
+                    *last_w = None;
+                } else {
+                    let new_item = ClipboardItem {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        raw_content: png_base64.clone(),
+                        display_content: format!("data:image/png;base64,{}", png_base64),
+                        content_type: "image".to_string(),
+                        sensitivity: security::Sensitivity::None,
+                        timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+                    };
+
+                    self.save_and_emit(state, new_item);
+                }
+            }
+        }
+    }
+
+    fn save_and_emit(&self, state: &State<'_, AppState>, new_item: ClipboardItem) {
+        {
+            let mut history = state.history.lock().unwrap();
+            history.insert(0, new_item.clone());
+            if history.len() > 100 {
+                history.pop();
+            }
+        }
+
+        // Save to SQLite & run cleanup
+        let config = config::load_config(&self.app_handle);
+        let _ = database::save_item(&state.db_path, &new_item, config.persist_level);
+        let _ = database::run_cleanup(&state.db_path);
+
+        let ui_item: UIClipboardItem = new_item.into();
+        let _ = self.app_handle.emit("clipboard-changed", ui_item);
+        let _ = update_tray_menu(&self.app_handle);
+    }
+}
+
 impl ClipboardHandler for ClipboardMonitor {
     fn on_clipboard_change(&mut self) -> CallbackResult {
-        let state = self.app_handle.state::<AppState>();
         let mut clipboard = match arboard::Clipboard::new() {
             Ok(c) => c,
             Err(_) => return CallbackResult::Next,
@@ -258,119 +415,24 @@ impl ClipboardHandler for ClipboardMonitor {
 
         // 1. Try to read text
         if let Ok(text) = clipboard.get_text() {
-            let trimmed = text.trim();
-            let mut last_t = self.last_text.lock().unwrap();
-            if !trimmed.is_empty() && text != *last_t {
-                let is_own_write = {
-                    let last_w = state.last_written.lock().unwrap();
-                    last_w.as_ref() == Some(&text)
-                };
-
-                *last_t = text.clone();
-                let mut last_img = self.last_image_hash.lock().unwrap();
-                *last_img = None; // Reset image comparator
-
-                if is_own_write {
-                    // Clean loop flag
-                    let mut last_w = state.last_written.lock().unwrap();
-                    *last_w = None;
-                } else {
-                    // Process text
-                    let (display_content, sensitivity) = if trimmed.starts_with("<svg") && trimmed.ends_with("</svg>") {
-                        match security::sanitize_svg(&text) {
-                            Ok(clean) => (clean, security::Sensitivity::None),
-                            Err(_) => (security::sanitize_text(&text), security::classify_sensitivity(&text)),
-                        }
-                    } else {
-                        (security::sanitize_text(&text), security::classify_sensitivity(&text))
-                    };
-
-                    let new_item = ClipboardItem {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        raw_content: text.clone(),
-                        display_content,
-                        content_type: "text".to_string(),
-                        sensitivity,
-                        timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
-                    };
-
-                    {
-                        let mut history = state.history.lock().unwrap();
-                        history.insert(0, new_item.clone());
-                        if history.len() > 100 {
-                            history.pop();
-                        }
-                    }
-
-                    // Save to SQLite & run cleanup
-                    let config = config::load_config(&self.app_handle);
-                    let _ = database::save_item(&state.db_path, &new_item, config.persist_level);
-                    let _ = database::run_cleanup(&state.db_path);
-
-                    let ui_item: UIClipboardItem = new_item.into();
-                    let _ = self.app_handle.emit("clipboard-changed", ui_item);
-                    let _ = update_tray_menu(&self.app_handle);
-                }
-            }
+            let app_handle = self.app_handle.clone();
+            let state_ref = app_handle.state::<AppState>();
+            self.process_text(&state_ref, text);
         }
         // 2. Try to read image
         else if let Ok(image_data) = clipboard.get_image() {
-            let bytes = &*image_data.bytes;
-            let image_hash = calculate_hash(&bytes);
+            let app_handle = self.app_handle.clone();
+            let state_ref = app_handle.state::<AppState>();
+            self.process_image(&state_ref, image_data);
+        }
 
-            let mut last_img = self.last_image_hash.lock().unwrap();
-            if Some(image_hash) != *last_img {
-                let mut last_t = self.last_text.lock().unwrap();
-                *last_t = String::new(); // Reset text comparator
-                *last_img = Some(image_hash);
+        CallbackResult::Next
+    }
 
-                if let Ok(png_base64) = encode_image_to_png(&image_data) {
-                    let is_own_write = {
-                        let last_w = state.last_written.lock().unwrap();
-                        last_w.as_ref() == Some(&png_base64)
-                    };
-
-                      if is_own_write {
-                          let mut last_w = state.last_written.lock().unwrap();
-                          *last_w = None;
-                      } else {
-                          let new_item = ClipboardItem {
-                              id: uuid::Uuid::new_v4().to_string(),
-                              raw_content: png_base64.clone(),
-                              display_content: format!("data:image/png;base64,{}", png_base64),
-                              content_type: "image".to_string(),
-                              sensitivity: security::Sensitivity::None,
-                              timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
-                          };
-
-                          {
-                              let mut history = state.history.lock().unwrap();
-                              history.insert(0, new_item.clone());
-                              if history.len() > 100 {
-                                  history.pop();
-                              }
-                          }
-
-                          // Save to SQLite & run cleanup
-                          let config = config::load_config(&self.app_handle);
-                          let _ = database::save_item(&state.db_path, &new_item, config.persist_level);
-                          let _ = database::run_cleanup(&state.db_path);
-
-                          let ui_item: UIClipboardItem = new_item.into();
-                          let _ = self.app_handle.emit("clipboard-changed", ui_item);
-                          let _ = update_tray_menu(&self.app_handle);
-                      }
-                  }
-              }
-          }
-
-          CallbackResult::Next
-      }
-
-      fn on_clipboard_error(&mut self, _error: std::io::Error) -> CallbackResult {
-          CallbackResult::Next
-      }
-  }
+    fn on_clipboard_error(&mut self, _error: std::io::Error) -> CallbackResult {
+        CallbackResult::Next
+    }
+}
 
   fn start_clipboard_monitor(app_handle: AppHandle) {
       thread::spawn(move || {
@@ -407,7 +469,10 @@ impl ClipboardHandler for ClipboardMonitor {
               let _ = database::init_db(&db_path);
               let _ = database::run_cleanup(&db_path);
 
-              // 2. Load History from SQLite
+              // 2. Initialize Plugin Directory
+              let _ = plugins::init_plugins_dir(&handle);
+
+              // 3. Load History from SQLite
               let loaded_history = database::load_history(&db_path).unwrap_or_default();
 
               let app_state = AppState {
@@ -417,10 +482,10 @@ impl ClipboardHandler for ClipboardMonitor {
               };
               app.manage(app_state);
 
-              // 3. Start Clipboard Monitor
+              // 4. Start Clipboard Monitor
               start_clipboard_monitor(handle.clone());
 
-              // 4. Initialize Global Shortcut Plugin with window toggle handler
+              // 5. Initialize Global Shortcut Plugin with window toggle handler
               let global_shortcut_plugin = tauri_plugin_global_shortcut::Builder::new()
                   .with_handler(move |app, shortcut, event| {
                       if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
@@ -513,7 +578,9 @@ impl ClipboardHandler for ClipboardMonitor {
               get_shortcut,
               set_shortcut,
               get_persist_level,
-              set_persist_level
+              set_persist_level,
+              get_plugins,
+              run_plugin
           ])
           .run(tauri::generate_context!())
           .expect("error while running tauri application");

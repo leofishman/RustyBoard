@@ -31,3 +31,13 @@ Este archivo contiene la planificación paso a paso para construir el gestor de 
 - [ ] **System Tray**: Configurar la aplicación para que inicie oculta en segundo plano y muestre un icono en la bandeja del sistema (System Tray).
 - [ ] **Shortcuts Globales**: Registrar el atajo de teclado `Ctrl+Shift+V` para invocar/mostrar la ventana desde cualquier parte del sistema operativo.
 - [ ] **Posicionamiento Dinámico**: Usar la API de Tauri para obtener las coordenadas del mouse y posicionar la ventana popup directamente sobre la posición del cursor cuando se dispare el shortcut.
+
+## 🔌 Fase 5: Sistema de Plugins & Seguridad
+- [x] **Ejecución vía CLI**: Implementar el cargador y ejecutor de plugins externos (`src-tauri/src/plugins.rs`).
+- [x] **Pase seguro por Stdin**: Comunicar contenido sensible al proceso vía entrada estándar (`stdin`) previniendo inyección de comandos.
+- [x] **Sincronización al Portapapeles**: Copiar el resultado de la salida del plugin de forma automática al portapapeles del sistema operativo (`copy_item_by_id`).
+- [x] **Cartel de Advertencia (Warning Modal)**: Mostrar una advertencia de seguridad en inglés antes de ejecutar un plugin por primera vez, permitiendo recordar la decisión.
+- [ ] **Soporte Multi-Idioma (i18n)**: Investigar e implementar soporte multi-idioma para la interfaz (traducción de advertencias, menús y botones).
+- [ ] **Mitigación de Malware del SO (Auto-Type)**: Implementar simulación de pulsaciones de teclado (virtual typing) para pegar texto directamente en la ventana activa sin escribirlo en el portapapeles.
+
+

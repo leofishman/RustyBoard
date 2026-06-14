@@ -1,0 +1,7 @@
+{
+  "id": "fabric-summary",
+  "name": "Fabric AI Summary",
+  "description": "Summarizes the text using fabric AI",
+  "command": "fabric",
+  "args": ["-p", "summarize"]
+}
