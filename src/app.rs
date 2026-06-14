@@ -202,7 +202,7 @@ fn ClipboardCard(
     on_run_plugin: Action<(String, String), (), LocalStorage>,
     on_trigger_warning: WriteSignal<Option<(String, String, String)>>,
     #[prop(into)] is_active: Signal<bool>,
-    on_delete: Action<String, (), LocalStorage>,
+    on_delete: Callback<String>,
 ) -> impl IntoView {
     let (revealed, set_revealed) = signal(false);
     let (copied_indicator, set_copied_indicator) = signal(false);
@@ -342,7 +342,7 @@ fn ClipboardCard(
                                     let set_deleting = set_deleting.clone();
                                     move |_| {
                                         set_deleting.set(true);
-                                        on_delete.dispatch(delete_id.clone());
+                                        on_delete.run(delete_id.clone());
                                     }
                                 }>
                                     "🗑️"
@@ -724,13 +724,13 @@ pub fn App() -> impl IntoView {
         }
     });
 
-    // 4c. Action to Delete from History
-    let delete_item = Action::new_local({
+    // 4c. Callback to Delete from History
+    let delete_item = Callback::new({
         let set_history = set_history.clone();
-        move |id: &String| {
+        move |id: String| {
             let id = id.clone();
             let set_history = set_history.clone();
-            async move {
+            spawn_local(async move {
                 if is_tauri() {
                     let args = serde_wasm_bindgen::to_value(&CopyArgs { id: id.clone() }).unwrap();
                     let _ = invoke("delete_clipboard_item", args).await;
@@ -738,26 +738,22 @@ pub fn App() -> impl IntoView {
                 set_history.update(|h| {
                     h.retain(|item| item.id != id);
                 });
-            }
+            });
         }
     });
 
-    // 4d. Action to Clear All History
-    let clear_all = Action::new_local({
+    // 4d. Handler to Clear All History
+    let handle_clear_all = {
         let set_history = set_history.clone();
-        move |_: &()| {
+        move |_| {
             let set_history = set_history.clone();
-            async move {
+            spawn_local(async move {
                 if is_tauri() {
                     let _ = invoke("clear_all_history", JsValue::UNDEFINED).await;
                 }
                 set_history.set(Vec::new());
-            }
+            });
         }
-    });
-
-    let handle_clear_all = move |_| {
-        clear_all.dispatch(());
     };
 
     // 4b. Action to Run Plugin

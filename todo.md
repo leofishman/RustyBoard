@@ -42,6 +42,6 @@ Este archivo contiene la planificación paso a paso para construir el gestor de 
 - [ ] **Mitigación de Malware del SO (Auto-Type)**: Implementar simulación de pulsaciones de teclado (virtual typing) para pegar texto directamente en la ventana activa sin escribirlo en el portapapeles.
 
 ## 🧹 Fase 6: Depuración y Validación Final (Próxima Sesión)
-- [ ] **Validar y Refinar "Clear All"**: Probar a fondo la funcionalidad de borrado total de historial en todas las plataformas y corregir posibles inconsistencias visuales de botones.
+- [ ] **Validar y Refinar Borrado e Historial ("Clear All")**: Resolver los problemas de bloqueo de hilos/interfaz (thread locking) al reconstruir el menú del System Tray durante las eliminaciones, y refinar la visualización de los botones de borrado.
 
 

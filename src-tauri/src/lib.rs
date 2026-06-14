@@ -103,18 +103,30 @@ fn copy_item_by_id(app: &AppHandle, id: &str) -> Result<(), String> {
 }
 
 fn update_tray_menu(app: &AppHandle) -> Result<(), String> {
+    let app_handle = app.clone();
+    app.run_on_main_thread(move || {
+        if let Err(e) = update_tray_menu_impl(&app_handle) {
+            eprintln!("Error updating tray menu on main thread: {}", e);
+        }
+    }).map_err(|e| e.to_string())
+}
+
+fn update_tray_menu_impl(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let history = state.history.lock().map_err(|e| e.to_string())?;
+    let history_items: Vec<ClipboardItem> = {
+        let history = state.history.lock().map_err(|e| e.to_string())?;
+        history.iter().take(15).cloned().collect()
+    };
     
     // Build menu
     let mut menu_builder = tauri::menu::MenuBuilder::new(app);
     
     // Add history items
-    if history.is_empty() {
+    if history_items.is_empty() {
         let empty_i = tauri::menu::MenuItem::with_id(app, "empty_placeholder", "(No clips yet)", false, None::<&str>).map_err(|e| e.to_string())?;
         menu_builder = menu_builder.item(&empty_i);
     } else {
-        for item in history.iter().take(15) { // Show top 15 items in tray menu
+        for item in history_items.iter() { // Show top 15 items in tray menu
             let mut label;
             let mut item_icon = None;
 
@@ -231,12 +243,14 @@ async fn delete_clipboard_item(app: AppHandle, id: String) -> Result<(), String>
         history.retain(|item| item.id != id);
     }
     
-    // 2. Spawn database removal and tray update asynchronously (non-blocking)
+    // 2. Update tray menu (non-blocking for this thread since it dispatches to main loop internally)
+    let _ = update_tray_menu(&app);
+    
+    // 3. Spawn database removal asynchronously (non-blocking)
     let app_handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle.state::<AppState>();
         let _ = database::delete_item(&state.db_path, &id);
-        let _ = update_tray_menu(&app_handle);
     });
     
     Ok(())
@@ -252,12 +266,14 @@ async fn clear_all_history(app: AppHandle) -> Result<(), String> {
         history.clear();
     }
     
-    // 2. Spawn database clear and tray update asynchronously (non-blocking)
+    // 2. Update tray menu
+    let _ = update_tray_menu(&app);
+    
+    // 3. Spawn database clear asynchronously (non-blocking)
     let app_handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle.state::<AppState>();
         let _ = database::clear_all(&state.db_path);
-        let _ = update_tray_menu(&app_handle);
     });
     
     Ok(())
