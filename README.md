@@ -83,6 +83,8 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 - [x] **Phase 8: Persistence & System Tray** (System tray daemon mode, window-close interception to tray, and warning modal for advanced persistence).
 - [x] **Phase 9: Dynamic Tray History & Preview/Raw Switching** (Diodon-style tray menu items, click-to-copy from tray, card view toggling, and reload on focus).
 - [x] **Phase 10: External Plugin System** (Extensible CLI-based plugin system to run external tools on clipboard contents like Fabric AI).
+- [x] **Phase 11: Safety Modal & Stdin/Stdout Sync** (One-time safety warning dialog with "do not show again" preference, and writing plugin outputs directly to the system clipboard).
+- [ ] **Phase 12: Multi-Language Support (i18n)** (Zero-dependency lightweight localization for English, Spanish, and other languages).
 
 ---
 
@@ -110,6 +112,11 @@ You can easily integrate external AI workflows, like [Fabric](https://github.com
 ```
 
 Now, any text you copy can be summarized with a single click from the UI! The community is encouraged to create and share their own custom `.json` plugins.
+
+### 🔒 Safety & Clipboard Synchronization
+
+- **Safety Warning Modal**: To protect against accidental execution of unvetted local binaries, RustyBoard shows a warning modal in English the first time you execute a plugin. You can suppress future warnings permanently by checking the "Do not show this warning again" checkbox, which persists your choice in the browser's local storage.
+- **System Clipboard Integration**: The text output of any executed plugin is automatically written back to your OS clipboard, making it instantly available for paste actions anywhere.
 
 ### Example Plugins included
 
