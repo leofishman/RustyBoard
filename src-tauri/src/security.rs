@@ -153,8 +153,11 @@ pub fn classify_sensitivity(text: &str) -> Sensitivity {
 
     // If it's a single word with high entropy and >= 32 chars, classify as Credential
     if !trimmed.contains(char::is_whitespace) && trimmed.len() >= 32 && trimmed.len() <= 128 {
-        if calculate_entropy(trimmed) > 4.2 {
-            return Sensitivity::Credential;
+        let is_url = trimmed.starts_with("http://") || trimmed.starts_with("https://");
+        if !is_url || trimmed.contains('@') {
+            if calculate_entropy(trimmed) > 4.2 {
+                return Sensitivity::Credential;
+            }
         }
     }
 
@@ -192,5 +195,8 @@ mod tests {
         assert_eq!(classify_sensitivity("test@example.com"), Sensitivity::Personal);
         assert_eq!(classify_sensitivity("ghp_123456789012345678901234567890123456"), Sensitivity::Credential);
         assert_eq!(classify_sensitivity("-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA..."), Sensitivity::Secret);
+        assert_eq!(classify_sensitivity("https://github.com/rust-lang/rust/commit/8d37aa908f51a44e6d426315df474e76a6b57cc7"), Sensitivity::None);
+        assert_eq!(classify_sensitivity("https://user:password@github.com/rust-lang/rust"), Sensitivity::Credential);
+        assert_eq!(classify_sensitivity("https://apnews.com/article/chad-sudan-civil-war-sexual-abuse-refugees-036f69088cd3a96cb3c970ddbfd00696"), Sensitivity::None);
     }
 }
