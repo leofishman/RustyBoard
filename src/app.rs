@@ -655,20 +655,23 @@ pub fn App() -> impl IntoView {
             <header class="header">
                 <div class="logo-area">
                     <div class="logo-title-row">
-                        <svg class="app-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" stroke="url(#rustyGradient)" />
-                            <rect x="8" y="2" width="8" height="4" rx="1" ry="1" fill="url(#metalGradient)" stroke="url(#rustyGradient)" stroke-width="1.5" />
-                            <line x1="8" y1="10" x2="16" y2="10" stroke="url(#rustyGradient)" stroke-width="1.5" />
-                            <line x1="8" y1="14" x2="14" y2="14" stroke="url(#rustyGradient)" stroke-width="1.5" />
-                            <circle cx="12" cy="4" r="1" fill="#f59e0b" />
+                        <svg class="app-logo" viewBox="0 0 24 24" fill="none">
+                            <rect x="5" y="4" width="14" height="17" rx="2.5" fill="url(#rustyGradient)" stroke="#5c2108" stroke-width="1" />
+                            <rect x="8" y="2.5" width="8" height="3" rx="0.75" fill="url(#metalGradient)" stroke="#334155" stroke-width="0.75" />
+                            <rect x="7.5" y="9.5" width="9" height="1.2" rx="0.6" fill="#451a03" />
+                            <rect x="7.5" y="13.5" width="9" height="1.2" rx="0.6" fill="#451a03" />
+                            <rect x="7.5" y="17.5" width="6.5" height="1.2" rx="0.6" fill="#451a03" />
+                            <circle cx="12" cy="4" r="0.6" fill="#f59e0b" stroke="#78350f" stroke-width="0.4" />
                             <defs>
                                 <linearGradient id="rustyGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                                    <stop offset="0%" stop-color="#ea580c" />
-                                    <stop offset="50%" stop-color="#b45309" />
-                                    <stop offset="100%" stop-color="#78350f" />
+                                    <stop offset="0%" stop-color="#b45309" />
+                                    <stop offset="35%" stop-color="#ea580c" />
+                                    <stop offset="70%" stop-color="#78350f" />
+                                    <stop offset="100%" stop-color="#451a03" />
                                 </linearGradient>
                                 <linearGradient id="metalGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                                    <stop offset="0%" stop-color="#94a3b8" />
+                                    <stop offset="0%" stop-color="#cbd5e1" />
+                                    <stop offset="50%" stop-color="#94a3b8" />
                                     <stop offset="100%" stop-color="#475569" />
                                 </linearGradient>
                             </defs>
