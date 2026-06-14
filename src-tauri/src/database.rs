@@ -16,17 +16,22 @@ pub fn init_db(db_path: &Path) -> Result<(), String> {
             display_content TEXT NOT NULL,
             content_type TEXT NOT NULL,
             sensitivity TEXT NOT NULL,
-            timestamp INTEGER NOT NULL
+            timestamp INTEGER NOT NULL,
+            thumbnail TEXT
         )",
         [],
     ).map_err(|e| e.to_string())?;
+
+    // Try to run migration for existing databases
+    let _ = conn.execute("ALTER TABLE history ADD COLUMN thumbnail TEXT", []);
+
     Ok(())
 }
 
 pub fn save_item(db_path: &Path, item: &ClipboardItem, level: PersistLevel) -> Result<(), String> {
     let should_save = match level {
         PersistLevel::None => item.sensitivity == Sensitivity::None,
-        PersistLevel::Sensitive => item.sensitivity != Sensitivity::Secret,
+        PersistLevel::Sensitive => item.sensitivity == Sensitivity::None || item.sensitivity == Sensitivity::Personal,
         PersistLevel::All => true,
     };
 
@@ -36,15 +41,16 @@ pub fn save_item(db_path: &Path, item: &ClipboardItem, level: PersistLevel) -> R
 
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
     conn.execute(
-        "INSERT OR REPLACE INTO history (id, raw_content, display_content, content_type, sensitivity, timestamp)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT OR REPLACE INTO history (id, raw_content, display_content, content_type, sensitivity, timestamp, thumbnail)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             item.id,
             item.raw_content,
             item.display_content,
             item.content_type,
             format!("{:?}", item.sensitivity),
-            item.timestamp
+            item.timestamp,
+            item.thumbnail
         ],
     ).map_err(|e| e.to_string())?;
     Ok(())
@@ -53,7 +59,7 @@ pub fn save_item(db_path: &Path, item: &ClipboardItem, level: PersistLevel) -> R
 pub fn load_history(db_path: &Path) -> Result<Vec<ClipboardItem>, String> {
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
-        "SELECT id, raw_content, display_content, content_type, sensitivity, timestamp
+        "SELECT id, raw_content, display_content, content_type, sensitivity, timestamp, thumbnail
          FROM history
          ORDER BY timestamp DESC
          LIMIT 100"
@@ -75,6 +81,7 @@ pub fn load_history(db_path: &Path) -> Result<Vec<ClipboardItem>, String> {
             content_type: row.get(3)?,
             sensitivity,
             timestamp: row.get(5)?,
+            thumbnail: row.get(6)?,
         })
     }).map_err(|e| e.to_string())?;
 
@@ -144,6 +151,7 @@ mod tests {
             content_type: "text".to_string(),
             sensitivity,
             timestamp,
+            thumbnail: None,
         }
     }
 
@@ -167,22 +175,24 @@ mod tests {
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].id, "id_none");
 
-        // 2. Sensitive level - None and Personal/Credential persist, Secret does not
+        // 2. Sensitive level - None and Personal persist, Secret and Credential do not
         let item_cred = get_dummy_item("id_cred", Sensitivity::Credential, 1003);
         assert!(save_item(&db_path, &item_personal, PersistLevel::Sensitive).is_ok());
         assert!(save_item(&db_path, &item_cred, PersistLevel::Sensitive).is_ok());
         assert!(save_item(&db_path, &item_secret, PersistLevel::Sensitive).is_ok());
 
         let history = load_history(&db_path).unwrap();
-        // None (from test 1), Personal, Credential
-        assert_eq!(history.len(), 3);
-        assert!(!history.iter().any(|x| x.id == "id_secret"));
+        // None (from test 1), Personal
+        assert_eq!(history.len(), 2);
+        assert!(!history.iter().any(|x| x.id == "id_secret" || x.id == "id_cred"));
 
         // 3. All level - everything persists including secrets
+        assert!(save_item(&db_path, &item_cred, PersistLevel::All).is_ok());
         assert!(save_item(&db_path, &item_secret, PersistLevel::All).is_ok());
         let history = load_history(&db_path).unwrap();
         assert_eq!(history.len(), 4);
         assert!(history.iter().any(|x| x.id == "id_secret"));
+        assert!(history.iter().any(|x| x.id == "id_cred"));
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -206,9 +216,9 @@ mod tests {
         // Regular item (older than 2 hours)
         let old_none = get_dummy_item("old_none", Sensitivity::None, now - 8000);
 
-        assert!(save_item(&db_path, &old_cred, PersistLevel::Sensitive).is_ok());
-        assert!(save_item(&db_path, &new_cred, PersistLevel::Sensitive).is_ok());
-        assert!(save_item(&db_path, &old_none, PersistLevel::Sensitive).is_ok());
+        assert!(save_item(&db_path, &old_cred, PersistLevel::All).is_ok());
+        assert!(save_item(&db_path, &new_cred, PersistLevel::All).is_ok());
+        assert!(save_item(&db_path, &old_none, PersistLevel::All).is_ok());
 
         assert!(run_cleanup(&db_path).is_ok());
 

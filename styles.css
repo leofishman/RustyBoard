@@ -828,5 +828,30 @@ body {
   to { transform: rotate(360deg); }
 }
 
+.browser-warning-banner {
+  background-color: rgba(245, 158, 11, 0.12);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  padding: 0.5rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  text-align: center;
+  margin-bottom: 1.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  font-weight: 500;
+}
+
+.browser-warning-banner code {
+  background-color: rgba(0, 0, 0, 0.4);
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  color: #fff;
+  font-family: monospace;
+  font-size: 0.75rem;
+}
+
 
 

@@ -27,6 +27,18 @@ extern "C" {
     fn set_storage_item(key: &str, value: &str);
 }
 
+fn is_tauri() -> bool {
+    let window = match web_sys::window() {
+        Some(w) => w,
+        None => return false,
+    };
+    let tauri_val = match js_sys::Reflect::get(&window, &JsValue::from_str("__TAURI__")) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    !tauri_val.is_undefined() && !tauri_val.is_null()
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Sensitivity {
     None,
@@ -579,97 +591,136 @@ pub fn App() -> impl IntoView {
 
     // 1. Initial Load of History and Plugins
     Effect::new(move |_| {
-        spawn_local(async move {
-            let val = invoke("get_history", JsValue::UNDEFINED).await;
-            if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<UIClipboardItem>>(val) {
-                set_history.set(items);
-            }
-
-            let val = invoke("get_plugins", JsValue::UNDEFINED).await;
-            if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<PluginDefinition>>(val) {
-                set_plugins.set(items);
-            }
-        });
-    });
-
-    // 1b. Listen for window-shown events to refresh history
-    Effect::new(move |_| {
-        let closure = Closure::<dyn Fn(JsValue)>::new(move |_| {
+        if is_tauri() {
             spawn_local(async move {
                 let val = invoke("get_history", JsValue::UNDEFINED).await;
                 if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<UIClipboardItem>>(val) {
                     set_history.set(items);
                 }
+
+                let val = invoke("get_plugins", JsValue::UNDEFINED).await;
+                if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<PluginDefinition>>(val) {
+                    set_plugins.set(items);
+                }
             });
-        });
+        } else {
+            // Provide some mock history items when running in the browser so the user can preview the UI!
+            set_history.set(vec![
+                UIClipboardItem {
+                    id: "mock-1".to_string(),
+                    display_content: "Welcome to RustyBoard! This is a mock clipboard item for browser preview.".to_string(),
+                    content_type: "text".to_string(),
+                    sensitivity: Sensitivity::None,
+                    timestamp: 1718320000,
+                },
+                UIClipboardItem {
+                    id: "mock-2".to_string(),
+                    display_content: "admin@rustyboard.org".to_string(),
+                    content_type: "text".to_string(),
+                    sensitivity: Sensitivity::Personal,
+                    timestamp: 1718318000,
+                },
+                UIClipboardItem {
+                    id: "mock-3".to_string(),
+                    display_content: "•••••••• [Secret]".to_string(),
+                    content_type: "text".to_string(),
+                    sensitivity: Sensitivity::Secret,
+                    timestamp: 1718316000,
+                }
+            ]);
+        }
+    });
 
-        let handler = closure.as_ref().unchecked_ref::<js_sys::Function>().clone();
-        closure.forget();
+    // 1b. Listen for window-shown events to refresh history
+    Effect::new(move |_| {
+        if is_tauri() {
+            let closure = Closure::<dyn Fn(JsValue)>::new(move |_| {
+                spawn_local(async move {
+                    let val = invoke("get_history", JsValue::UNDEFINED).await;
+                    if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<UIClipboardItem>>(val) {
+                        set_history.set(items);
+                    }
+                });
+            });
 
-        spawn_local(async move {
-            listen("window-shown", &handler).await;
-        });
+            let handler = closure.as_ref().unchecked_ref::<js_sys::Function>().clone();
+            closure.forget();
+
+            spawn_local(async move {
+                listen("window-shown", &handler).await;
+            });
+        }
     });
 
     // 1c. Listen for history-synced events (periodic background cleanup sync)
     Effect::new(move |_| {
-        let set_history = set_history.clone();
-        let closure = Closure::<dyn Fn(JsValue)>::new(move |event_payload: JsValue| {
-            if let Ok(payload) = js_sys::Reflect::get(&event_payload, &JsValue::from_str("payload")) {
-                if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<UIClipboardItem>>(payload) {
-                    set_history.set(items);
+        if is_tauri() {
+            let set_history = set_history.clone();
+            let closure = Closure::<dyn Fn(JsValue)>::new(move |event_payload: JsValue| {
+                if let Ok(payload) = js_sys::Reflect::get(&event_payload, &JsValue::from_str("payload")) {
+                    if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<UIClipboardItem>>(payload) {
+                        set_history.set(items);
+                    }
                 }
-            }
-        });
+            });
 
-        let handler = closure.as_ref().unchecked_ref::<js_sys::Function>().clone();
-        closure.forget();
+            let handler = closure.as_ref().unchecked_ref::<js_sys::Function>().clone();
+            closure.forget();
 
-        spawn_local(async move {
-            listen("history-synced", &handler).await;
-        });
+            spawn_local(async move {
+                listen("history-synced", &handler).await;
+            });
+        }
     });
 
     // 2. Initial Load of persist_level configuration
     Effect::new(move |_| {
-        spawn_local(async move {
-            let val = invoke("get_persist_level", JsValue::UNDEFINED).await;
-            if let Some(s) = val.as_string() {
-                set_persist_level.set(s);
-            }
-        });
+        if is_tauri() {
+            spawn_local(async move {
+                let val = invoke("get_persist_level", JsValue::UNDEFINED).await;
+                if let Some(s) = val.as_string() {
+                    set_persist_level.set(s);
+                }
+            });
+        } else {
+            set_persist_level.set("Sensitive".to_string());
+        }
     });
 
     // 3. Listen for Real-Time Clipboard Events
     Effect::new(move |_| {
-        let set_history = set_history.clone();
-        let closure = Closure::<dyn Fn(JsValue)>::new(move |event_payload: JsValue| {
-            if let Ok(payload) = js_sys::Reflect::get(&event_payload, &JsValue::from_str("payload")) {
-                if let Ok(item) = serde_wasm_bindgen::from_value::<UIClipboardItem>(payload) {
-                    set_history.update(|h| {
-                        h.insert(0, item);
-                        if h.len() > 100 {
-                            h.pop();
-                        }
-                    });
+        if is_tauri() {
+            let set_history = set_history.clone();
+            let closure = Closure::<dyn Fn(JsValue)>::new(move |event_payload: JsValue| {
+                if let Ok(payload) = js_sys::Reflect::get(&event_payload, &JsValue::from_str("payload")) {
+                    if let Ok(item) = serde_wasm_bindgen::from_value::<UIClipboardItem>(payload) {
+                        set_history.update(|h| {
+                            h.insert(0, item);
+                            if h.len() > 100 {
+                                h.pop();
+                            }
+                        });
+                    }
                 }
-            }
-        });
+            });
 
-        let handler = closure.as_ref().unchecked_ref::<js_sys::Function>().clone();
-        closure.forget();
+            let handler = closure.as_ref().unchecked_ref::<js_sys::Function>().clone();
+            closure.forget();
 
-        spawn_local(async move {
-            listen("clipboard-changed", &handler).await;
-        });
+            spawn_local(async move {
+                listen("clipboard-changed", &handler).await;
+            });
+        }
     });
 
     // 4. Action to Copy back to OS Clipboard (thread-local since futures are not Send)
     let copy_item = Action::new_local(|id: &String| {
         let id = id.clone();
         async move {
-            let args = serde_wasm_bindgen::to_value(&CopyArgs { id }).unwrap();
-            invoke("copy_to_clipboard", args).await;
+            if is_tauri() {
+                let args = serde_wasm_bindgen::to_value(&CopyArgs { id }).unwrap();
+                invoke("copy_to_clipboard", args).await;
+            }
         }
     });
 
@@ -680,8 +731,10 @@ pub fn App() -> impl IntoView {
             let id = id.clone();
             let set_history = set_history.clone();
             async move {
-                let args = serde_wasm_bindgen::to_value(&CopyArgs { id: id.clone() }).unwrap();
-                let _ = invoke("delete_clipboard_item", args).await;
+                if is_tauri() {
+                    let args = serde_wasm_bindgen::to_value(&CopyArgs { id: id.clone() }).unwrap();
+                    let _ = invoke("delete_clipboard_item", args).await;
+                }
                 set_history.update(|h| {
                     h.retain(|item| item.id != id);
                 });
@@ -695,7 +748,9 @@ pub fn App() -> impl IntoView {
         move |_: &()| {
             let set_history = set_history.clone();
             async move {
-                let _ = invoke("clear_all_history", JsValue::UNDEFINED).await;
+                if is_tauri() {
+                    let _ = invoke("clear_all_history", JsValue::UNDEFINED).await;
+                }
                 set_history.set(Vec::new());
             }
         }
@@ -711,10 +766,14 @@ pub fn App() -> impl IntoView {
         let item_id = args.1.clone();
         async move {
             set_plugin_error.set(None);
-            let invoke_args = serde_wasm_bindgen::to_value(&RunPluginArgs { plugin_id, item_id }).unwrap();
-            if let Err(e) = invoke_catch("run_plugin", invoke_args).await {
-                let msg = e.as_string().unwrap_or_else(|| "Plugin execution failed.".to_string());
-                set_plugin_error.set(Some(msg));
+            if is_tauri() {
+                let invoke_args = serde_wasm_bindgen::to_value(&RunPluginArgs { plugin_id, item_id }).unwrap();
+                if let Err(e) = invoke_catch("run_plugin", invoke_args).await {
+                    let msg = e.as_string().unwrap_or_else(|| "Plugin execution failed.".to_string());
+                    set_plugin_error.set(Some(msg));
+                }
+            } else {
+                set_plugin_error.set(Some("Plugins are only available in the native desktop app.".to_string()));
             }
         }
     });
@@ -728,8 +787,10 @@ pub fn App() -> impl IntoView {
         } else {
             set_persist_level.set(value.clone());
             spawn_local(async move {
-                let args = serde_wasm_bindgen::to_value(&LevelArgs { value }).unwrap();
-                invoke("set_persist_level", args).await;
+                if is_tauri() {
+                    let args = serde_wasm_bindgen::to_value(&LevelArgs { value }).unwrap();
+                    invoke("set_persist_level", args).await;
+                }
             });
         }
     };
@@ -738,8 +799,10 @@ pub fn App() -> impl IntoView {
         set_show_confirm_modal.set(false);
         set_persist_level.set("All".to_string());
         spawn_local(async move {
-            let args = serde_wasm_bindgen::to_value(&LevelArgs { value: "All".to_string() }).unwrap();
-            invoke("set_persist_level", args).await;
+            if is_tauri() {
+                let args = serde_wasm_bindgen::to_value(&LevelArgs { value: "All".to_string() }).unwrap();
+                invoke("set_persist_level", args).await;
+            }
         });
     };
 
@@ -753,6 +816,17 @@ pub fn App() -> impl IntoView {
 
     view! {
         <main class="container">
+            {move || {
+                if !is_tauri() {
+                    view! {
+                        <div class="browser-warning-banner">
+                            "⚠️ Running in Browser Sandbox. Run " <code>"cargo tauri dev"</code> " to launch the native desktop app with clipboard syncing."
+                        </div>
+                    }.into_any()
+                } else {
+                    view! { <div style="display: none;"></div> }.into_any()
+                }
+            }}
             <header class="header">
                 <div class="logo-area">
                     <div class="logo-title-row">

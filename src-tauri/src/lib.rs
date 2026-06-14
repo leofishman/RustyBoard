@@ -16,12 +16,13 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ClipboardItem {
-    id: String,
-    raw_content: String,      // Intact original content (not sent to UI)
-    display_content: String,  // Sanitized content for UI display
-    content_type: String,     // "text" or "image"
-    sensitivity: security::Sensitivity,
-    timestamp: u64,
+    pub id: String,
+    pub raw_content: String,      // Intact original content (not sent to UI)
+    pub display_content: String,  // Sanitized content for UI display
+    pub content_type: String,     // "text" or "image"
+    pub sensitivity: security::Sensitivity,
+    pub timestamp: u64,
+    pub thumbnail: Option<String>,
 }
 
 // Representing the ClipboardItem structure sent to the UI
@@ -118,29 +119,37 @@ fn update_tray_menu(app: &AppHandle) -> Result<(), String> {
             let mut item_icon = None;
 
             if item.content_type == "image" {
-                // Decode metadata from base64 png
                 let base64_str = if item.display_content.starts_with("data:image/png;base64,") {
                     &item.display_content["data:image/png;base64,".len()..]
                 } else {
                     &item.raw_content
                 };
 
-                if let Ok(bytes) = BASE64.decode(base64_str) {
-                    let size_kb = bytes.len() as f64 / 1024.0;
-                    if let Ok(img) = image::load_from_memory(&bytes) {
-                        let w = img.width();
-                        let h = img.height();
-                        label = format!("[Image - {}x{}px - {:.1} KB]", w, h, size_kb);
-                        
-                        // Build a tiny thumbnail icon (18x18) for the tray menu
-                        let thumbnail = img.resize_exact(18, 18, image::imageops::FilterType::Lanczos3);
-                        let rgba_data = thumbnail.into_rgba8().into_raw();
-                        item_icon = Some(tauri::image::Image::new_owned(rgba_data, 18, 18));
-                    } else {
-                        label = format!("[Image - Unknown dimensions - {:.1} KB]", size_kb);
-                    }
+                let size_kb = if let Ok(bytes) = BASE64.decode(base64_str) {
+                    bytes.len() as f64 / 1024.0
                 } else {
-                    label = "[Image]".to_string();
+                    0.0
+                };
+                label = format!("[Image - {:.1} KB]", size_kb);
+
+                // Use pre-generated thumbnail if available
+                if let Some(ref thumb_b64) = item.thumbnail {
+                    if let Ok(rgba_data) = BASE64.decode(thumb_b64) {
+                        if rgba_data.len() == 18 * 18 * 4 {
+                            item_icon = Some(tauri::image::Image::new_owned(rgba_data, 18, 18));
+                        }
+                    }
+                }
+
+                // Fallback for older entries
+                if item_icon.is_none() {
+                    if let Ok(bytes) = BASE64.decode(base64_str) {
+                        if let Ok(img) = image::load_from_memory(&bytes) {
+                            let thumbnail = img.resize_exact(18, 18, image::imageops::FilterType::Lanczos3);
+                            let rgba_data = thumbnail.into_rgba8().into_raw();
+                            item_icon = Some(tauri::image::Image::new_owned(rgba_data, 18, 18));
+                        }
+                    }
                 }
             } else {
                 label = item.display_content.clone();
@@ -322,6 +331,7 @@ fn run_plugin(app: AppHandle, plugin_id: String, item_id: String) -> Result<UICl
         content_type: "text".to_string(),
         sensitivity: response.sensitivity,
         timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+        thumbnail: None,
     };
 
     // Save item locally and in UI
@@ -390,6 +400,19 @@ fn encode_image_to_png(image_data: &arboard::ImageData<'_>) -> Result<String, St
     Ok(BASE64.encode(png_bytes))
 }
 
+fn generate_image_thumbnail(image_data: &arboard::ImageData<'_>) -> Option<String> {
+    use image::{ImageBuffer, Rgba};
+    let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_raw(
+        image_data.width as u32,
+        image_data.height as u32,
+        image_data.bytes.to_vec(),
+    )?;
+    
+    let resized = image::imageops::resize(&buffer, 18, 18, image::imageops::FilterType::Lanczos3);
+    let raw_bytes = resized.into_raw();
+    Some(BASE64.encode(raw_bytes))
+}
+
 struct ClipboardMonitor {
     app_handle: AppHandle,
     last_text: Mutex<String>,
@@ -432,6 +455,7 @@ impl ClipboardMonitor {
                     content_type: "text".to_string(),
                     sensitivity,
                     timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+                    thumbnail: None,
                 };
 
                 self.save_and_emit(state, new_item);
@@ -459,6 +483,7 @@ impl ClipboardMonitor {
                     let mut last_w = state.last_written.lock().unwrap();
                     *last_w = None;
                 } else {
+                    let thumbnail = generate_image_thumbnail(&image_data);
                     let new_item = ClipboardItem {
                         id: uuid::Uuid::new_v4().to_string(),
                         raw_content: png_base64.clone(),
@@ -466,6 +491,7 @@ impl ClipboardMonitor {
                         content_type: "image".to_string(),
                         sensitivity: security::Sensitivity::None,
                         timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+                        thumbnail,
                     };
 
                     self.save_and_emit(state, new_item);
@@ -580,6 +606,13 @@ impl ClipboardHandler for ClipboardMonitor {
                   loop {
                       interval.tick().await;
                       if let Some(state) = periodic_handle.try_state::<AppState>() {
+                          let config = config::load_config(&periodic_handle);
+                          
+                          // In Unrestricted mode, do not run cleanup at all
+                          if config.persist_level == config::PersistLevel::All {
+                              continue;
+                          }
+
                           let now = std::time::SystemTime::now()
                               .duration_since(std::time::UNIX_EPOCH)
                               .map(|d| d.as_secs())
@@ -590,14 +623,24 @@ impl ClipboardHandler for ClipboardMonitor {
                           if let Ok(mut history) = state.history.lock() {
                               let before_len = history.len();
                               history.retain(|item| {
-                                  !(item.sensitivity == security::Sensitivity::Credential && item.timestamp < cutoff)
+                                  match config.persist_level {
+                                      config::PersistLevel::None => {
+                                          // Paranoid mode: delete Personal, Credential, Secret
+                                          !(item.sensitivity != security::Sensitivity::None && item.timestamp < cutoff)
+                                      }
+                                      config::PersistLevel::Sensitive => {
+                                          // Balanced mode: delete Credential, Secret
+                                          !(matches!(item.sensitivity, security::Sensitivity::Credential | security::Sensitivity::Secret) && item.timestamp < cutoff)
+                                      }
+                                      config::PersistLevel::All => true,
+                                  }
                               });
                               if history.len() != before_len {
                                   changed = true;
                               }
                           }
                           
-                          // Run DB cleanup
+                          // Run DB cleanup only if not in Unrestricted mode
                           let _ = database::run_cleanup(&state.db_path);
                           
                           if changed {
