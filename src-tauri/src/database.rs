@@ -123,6 +123,15 @@ pub fn delete_item(db_path: &Path, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn clear_all(db_path: &Path) -> Result<(), String> {
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM history",
+        [],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

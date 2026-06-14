@@ -213,20 +213,43 @@ fn copy_to_clipboard(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn delete_clipboard_item(app: AppHandle, id: String) -> Result<(), String> {
+async fn delete_clipboard_item(app: AppHandle, id: String) -> Result<(), String> {
     let state = app.state::<AppState>();
     
-    // 1. Remove from in-memory history
+    // 1. Remove from in-memory history immediately
     {
         let mut history = state.history.lock().map_err(|e| e.to_string())?;
         history.retain(|item| item.id != id);
     }
     
-    // 2. Remove from database
-    let _ = database::delete_item(&state.db_path, &id);
+    // 2. Spawn database removal and tray update asynchronously (non-blocking)
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        let _ = database::delete_item(&state.db_path, &id);
+        let _ = update_tray_menu(&app_handle);
+    });
     
-    // 3. Update system tray menu
-    let _ = update_tray_menu(&app);
+    Ok(())
+}
+
+#[tauri::command]
+async fn clear_all_history(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    
+    // 1. Clear in-memory history immediately
+    {
+        let mut history = state.history.lock().map_err(|e| e.to_string())?;
+        history.clear();
+    }
+    
+    // 2. Spawn database clear and tray update asynchronously (non-blocking)
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        let _ = database::clear_all(&state.db_path);
+        let _ = update_tray_menu(&app_handle);
+    });
     
     Ok(())
 }
@@ -542,13 +565,51 @@ impl ClipboardHandler for ClipboardMonitor {
 
               let app_state = AppState {
                   db_path,
-                  history: Mutex::new(loaded_history),
+              history: Mutex::new(loaded_history),
                   last_written: Mutex::new(None),
               };
               app.manage(app_state);
 
               // 4. Start Clipboard Monitor
               start_clipboard_monitor(handle.clone());
+
+              // 4b. Start Periodic Cleanup Loop (every 60 seconds)
+              let periodic_handle = handle.clone();
+              tauri::async_runtime::spawn(async move {
+                  let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+                  loop {
+                      interval.tick().await;
+                      if let Some(state) = periodic_handle.try_state::<AppState>() {
+                          let now = std::time::SystemTime::now()
+                              .duration_since(std::time::UNIX_EPOCH)
+                              .map(|d| d.as_secs())
+                              .unwrap_or(0);
+                          let cutoff = now - 7200; // 2 hours in seconds
+                          
+                          let mut changed = false;
+                          if let Ok(mut history) = state.history.lock() {
+                              let before_len = history.len();
+                              history.retain(|item| {
+                                  !(item.sensitivity == security::Sensitivity::Credential && item.timestamp < cutoff)
+                              });
+                              if history.len() != before_len {
+                                  changed = true;
+                              }
+                          }
+                          
+                          // Run DB cleanup
+                          let _ = database::run_cleanup(&state.db_path);
+                          
+                          if changed {
+                              let _ = update_tray_menu(&periodic_handle);
+                              if let Ok(history) = state.history.lock() {
+                                  let ui_history: Vec<UIClipboardItem> = history.iter().map(|item| item.clone().into()).collect();
+                                  let _ = periodic_handle.emit("history-synced", ui_history);
+                              }
+                          }
+                      }
+                  }
+              });
 
               // 5. Initialize Global Shortcut Plugin with window toggle handler
               let global_shortcut_plugin = tauri_plugin_global_shortcut::Builder::new()
@@ -641,6 +702,7 @@ impl ClipboardHandler for ClipboardMonitor {
               get_history,
               copy_to_clipboard,
               delete_clipboard_item,
+              clear_all_history,
               get_shortcut,
               set_shortcut,
               get_persist_level,
