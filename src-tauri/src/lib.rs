@@ -750,6 +750,7 @@ impl ClipboardHandler for ClipboardMonitor {
               // Build Tray Icon with custom ID "main" and register events
               let _tray = tauri::tray::TrayIconBuilder::with_id("main")
                   .icon(app.default_window_icon().unwrap().clone())
+                  .tooltip("RustyBoard")
                   .on_menu_event(|app: &tauri::AppHandle, event: tauri::menu::MenuEvent| {
                       let id = event.id().as_ref();
                       match id {

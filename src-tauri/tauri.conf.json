@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tauri-app",
+  "productName": "RustyBoard",
   "version": "0.1.0",
-  "identifier": "com.leo.tauri-app",
+  "identifier": "com.leofishman.rusty-board",
   "build": {
     "beforeDevCommand": "trunk serve",
     "devUrl": "http://localhost:1420",
@@ -13,9 +13,11 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "tauri-app",
-        "width": 800,
-        "height": 600
+        "title": "RustyBoard",
+        "width": 1000,
+        "height": 600,
+        "resizable": true,
+        "fullscreen": false
       }
     ],
     "security": {
